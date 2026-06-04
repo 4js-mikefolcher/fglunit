@@ -4,7 +4,7 @@
 #   make clean     remove .42m
 
 PKG_ROOT = ..
-SRCS     = test_Assertions.4gl
+SRCS     = test_Assertions.4gl test_Discovery.4gl test_Aggregator.4gl
 TGTS     = $(SRCS:.4gl=.42m)
 
 export FGLLDPATH := $(PKG_ROOT):$(FGLLDPATH)
@@ -13,6 +13,8 @@ all: run
 
 run: $(TGTS)
 	fglrun test_Assertions.42m
+	fglrun test_Discovery.42m
+	fglrun test_Aggregator.42m
 
 %.42m: %.4gl
 	fglcomp -M -Wall $<

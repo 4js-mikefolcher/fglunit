@@ -1,0 +1,254 @@
+# fglunit-gen — generate xUnit runner modules from test source.
+#
+# A test module is a plain .4gl (no PACKAGE, no MAIN) with PUBLIC FUNCTION
+# test*() cases and optional PUBLIC fixtures (setUp/tearDown/setUpSuite/
+# tearDownSuite). For each input this writes a "<base>.run.4gl" runner that
+# registers everything and calls FglUnit.run().
+#
+#   fglrun fglunit_gen.42m [options] <test-source.4gl> ...
+#     --dir <d>      discover test_*.4gl under <d> (non-recursive)
+#     --out <file>   output path (single input only; default <base>.run.4gl)
+#     --suite <name> override suite name (single input only)
+#     --stdout       write to stdout instead of a file
+#     -h, --help
+
+IMPORT os
+IMPORT FGL com.fourjs.fglunit.Discovery
+
+PRIVATE DEFINE inputs DYNAMIC ARRAY OF STRING
+PRIVATE DEFINE optOut, optSuite STRING
+PRIVATE DEFINE optStdout BOOLEAN
+
+MAIN
+    DEFINE i INTEGER
+    DEFINE hadError BOOLEAN
+
+    CALL parseArgs()
+
+    IF inputs.getLength() == 0 THEN
+        DISPLAY "fglunit-gen: no input files (use --dir or pass test_*.4gl)"
+        CALL usage()
+        EXIT PROGRAM 2
+    END IF
+
+    IF inputs.getLength() > 1 AND (optOut IS NOT NULL OR optSuite IS NOT NULL) THEN
+        DISPLAY "fglunit-gen: --out/--suite only valid with a single input file"
+        EXIT PROGRAM 2
+    END IF
+
+    FOR i = 1 TO inputs.getLength()
+        IF NOT processFile(inputs[i]) THEN
+            LET hadError = TRUE
+        END IF
+    END FOR
+
+    IF hadError THEN EXIT PROGRAM 1 END IF
+    EXIT PROGRAM 0
+END MAIN
+
+# Generate one runner. Returns FALSE on a hard error.
+PRIVATE FUNCTION processFile(path STRING) RETURNS BOOLEAN
+    DEFINE src, moduleName, suite, runnerText, outPath STRING
+    DEFINE res Discovery.DiscoveryResult
+
+    LET src = readFile(path)
+    IF src IS NULL THEN
+        DISPLAY SFMT("fglunit-gen: cannot read '%1'", path)
+        RETURN FALSE
+    END IF
+
+    LET moduleName = stem(os.Path.baseName(path))
+    LET res = Discovery.parseSource(src)
+
+    IF res.errorMsg IS NOT NULL THEN
+        DISPLAY SFMT("fglunit-gen: %1: %2", path, res.errorMsg)
+        RETURN FALSE
+    END IF
+
+    IF res.tests.getLength() == 0 THEN
+        DISPLAY SFMT("fglunit-gen: %1: no test* functions found, skipping", path)
+        RETURN TRUE   # not fatal — directory sweeps hit helper modules
+    END IF
+
+    IF optSuite IS NOT NULL THEN
+        LET suite = optSuite
+    ELSE
+        LET suite = Discovery.suiteNameFor(moduleName)
+    END IF
+
+    LET runnerText = Discovery.renderRunner(moduleName, suite, res)
+
+    IF optStdout THEN
+        CALL writeStdout(runnerText)
+        RETURN TRUE
+    END IF
+
+    IF optOut IS NOT NULL THEN
+        LET outPath = optOut
+    ELSE
+        LET outPath = defaultOut(path, moduleName)
+    END IF
+
+    IF NOT writeFile(outPath, runnerText) THEN
+        DISPLAY SFMT("fglunit-gen: cannot write '%1'", outPath)
+        RETURN FALSE
+    END IF
+
+    DISPLAY SFMT("fglunit-gen: %1 -> %2 (%3 tests)",
+        path, outPath, res.tests.getLength())
+    RETURN TRUE
+END FUNCTION
+
+# Args --------------------------------------------------------------
+
+PRIVATE FUNCTION parseArgs()
+    DEFINE i, n INTEGER
+    DEFINE arg STRING
+
+    LET n = num_args()
+    LET i = 1
+    WHILE i <= n
+        LET arg = arg_val(i)
+        CASE
+            WHEN arg == "-h" OR arg == "--help"
+                CALL usage()
+                EXIT PROGRAM 0
+            WHEN arg == "--stdout"
+                LET optStdout = TRUE
+            WHEN arg == "--out"
+                LET optOut = needValue(arg, i, n)
+                LET i = i + 1
+            WHEN arg == "--suite"
+                LET optSuite = needValue(arg, i, n)
+                LET i = i + 1
+            WHEN arg == "--dir"
+                CALL scanDir(needValue(arg, i, n))
+                LET i = i + 1
+            WHEN arg.getIndexOf("-", 1) == 1
+                DISPLAY SFMT("fglunit-gen: unknown option '%1'", arg)
+                CALL usage()
+                EXIT PROGRAM 2
+            OTHERWISE
+                LET inputs[inputs.getLength() + 1] = arg
+        END CASE
+        LET i = i + 1
+    END WHILE
+END FUNCTION
+
+PRIVATE FUNCTION needValue(flag STRING, i INTEGER, n INTEGER) RETURNS STRING
+    IF i + 1 > n THEN
+        DISPLAY SFMT("fglunit-gen: option '%1' requires a value", flag)
+        EXIT PROGRAM 2
+    END IF
+    RETURN arg_val(i + 1)
+END FUNCTION
+
+# Append every test_*.4gl in `dir` (non-recursive) to the input list.
+PRIVATE FUNCTION scanDir(dir STRING)
+    DEFINE h INTEGER
+    DEFINE name, low STRING
+
+    LET h = os.Path.dirOpen(dir)
+    IF h == 0 THEN
+        DISPLAY SFMT("fglunit-gen: cannot open directory '%1'", dir)
+        EXIT PROGRAM 2
+    END IF
+    WHILE TRUE
+        LET name = os.Path.dirNext(h)
+        IF name IS NULL OR name == "" THEN EXIT WHILE END IF
+        LET low = name.toLowerCase()
+        IF low.getIndexOf("test", 1) == 1
+           AND low.getIndexOf(".run.4gl", 1) == 0
+           AND endsWith(low, ".4gl") THEN
+            LET inputs[inputs.getLength() + 1] = os.Path.join(dir, name)
+        END IF
+    END WHILE
+    CALL os.Path.dirClose(h)
+END FUNCTION
+
+# File I/O ----------------------------------------------------------
+
+PRIVATE FUNCTION readFile(path STRING) RETURNS STRING
+    DEFINE ch base.Channel
+    DEFINE sb base.StringBuffer
+    DEFINE line STRING
+
+    LET ch = base.Channel.create()
+    TRY
+        CALL ch.openFile(path, "r")
+    CATCH
+        RETURN NULL
+    END TRY
+    LET sb = base.StringBuffer.create()
+    WHILE TRUE
+        LET line = ch.readLine()
+        IF ch.isEof() THEN EXIT WHILE END IF
+        CALL sb.append(line)
+        CALL sb.append("\n")
+    END WHILE
+    CALL ch.close()
+    RETURN sb.toString()
+END FUNCTION
+
+PRIVATE FUNCTION writeFile(path STRING, text STRING) RETURNS BOOLEAN
+    DEFINE ch base.Channel
+    LET ch = base.Channel.create()
+    TRY
+        CALL ch.openFile(path, "w")
+    CATCH
+        RETURN FALSE
+    END TRY
+    # renderRunner already terminates every line (including the last) with
+    # "\n"; strip one so writeLine doesn't double the trailing newline.
+    IF text.getCharAt(text.getLength()) == "\n" THEN
+        LET text = text.subString(1, text.getLength() - 1)
+    END IF
+    CALL ch.writeLine(text)
+    CALL ch.close()
+    RETURN TRUE
+END FUNCTION
+
+PRIVATE FUNCTION writeStdout(text STRING)
+    IF text.getCharAt(text.getLength()) == "\n" THEN
+        LET text = text.subString(1, text.getLength() - 1)
+    END IF
+    DISPLAY text
+END FUNCTION
+
+# Path helpers ------------------------------------------------------
+
+# Default output: "<dir>/<base>.run.4gl" next to the source.
+PRIVATE FUNCTION defaultOut(srcPath STRING, moduleName STRING) RETURNS STRING
+    DEFINE dir STRING
+    LET dir = os.Path.dirName(srcPath)
+    IF dir IS NULL OR dir == "" OR dir == "." THEN
+        RETURN moduleName || ".run.4gl"
+    END IF
+    RETURN os.Path.join(dir, moduleName || ".run.4gl")
+END FUNCTION
+
+# Strip a trailing ".4gl" (case-insensitive) from a file name.
+PRIVATE FUNCTION stem(fileName STRING) RETURNS STRING
+    IF endsWith(fileName.toLowerCase(), ".4gl") THEN
+        RETURN fileName.subString(1, fileName.getLength() - 4)
+    END IF
+    RETURN fileName
+END FUNCTION
+
+PRIVATE FUNCTION endsWith(s STRING, suffix STRING) RETURNS BOOLEAN
+    DEFINE at INTEGER
+    IF s.getLength() < suffix.getLength() THEN RETURN FALSE END IF
+    LET at = s.getLength() - suffix.getLength() + 1
+    RETURN s.subString(at, s.getLength()) == suffix
+END FUNCTION
+
+PRIVATE FUNCTION usage()
+    DISPLAY "Usage: fglrun fglunit_gen.42m [options] <test-source.4gl> ..."
+    DISPLAY ""
+    DISPLAY "Options:"
+    DISPLAY "  --dir <d>       Discover test_*.4gl under <d> (non-recursive)"
+    DISPLAY "  --out <file>    Output path (single input only)"
+    DISPLAY "  --suite <name>  Override suite name (single input only)"
+    DISPLAY "  --stdout        Write generated runner to stdout"
+    DISPLAY "  -h, --help      Show this help"
+END FUNCTION

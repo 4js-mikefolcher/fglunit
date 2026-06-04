@@ -13,10 +13,11 @@ shell tooling, no codegen.
 6. [Testing error paths (`assertThrows` and `WHENEVER ANY ERROR RAISE`)](#testing-error-paths)
 7. [Skipping tests](#skipping-tests)
 8. [Running tests](#running-tests)
-9. [JUnit XML for CI](#junit-xml-for-ci)
-10. [Failure vs Error](#failure-vs-error)
-11. [When to use fglunit vs GGC](#when-to-use-fglunit-vs-ggc)
-12. [Limitations](#limitations)
+9. [Discovery & running a whole test tree](#discovery--running-a-whole-test-tree)
+10. [JUnit XML for CI](#junit-xml-for-ci)
+11. [Failure vs Error](#failure-vs-error)
+12. [When to use fglunit vs GGC](#when-to-use-fglunit-vs-ggc)
+13. [Limitations](#limitations)
 
 ---
 
@@ -232,6 +233,95 @@ Exit code: `0` when all pass, `1` if any FAIL or ERROR.
 Color is auto-detected via `$TERM` — set `TERM=dumb` (or `--color never`)
 to disable in CI logs.
 
+## Discovery & running a whole test tree
+
+The hand-written `MAIN` works, but two optional tools remove the
+boilerplate: **`fglunit-gen`** writes the runner for you, and
+**`fglunit-run`** runs many suites into one report. Both are pure BDL.
+
+### `fglunit-gen` — generate a runner from a test module
+
+Write a test module as a **plain `.4gl`** — no `PACKAGE`, no `MAIN`, no
+`register()` calls — containing only `PUBLIC` functions:
+
+```4gl
+# test_Calculator.4gl
+IMPORT FGL com.fourjs.fglunit.Assertions
+IMPORT FGL Calculator
+
+PUBLIC FUNCTION setUp()                       -- optional fixture
+END FUNCTION
+
+PUBLIC FUNCTION test_add()
+    CALL Assertions.assertEqualsInt(5, Calculator.add(2, 3), "2 + 3")
+END FUNCTION
+```
+
+The generator discovers symbols **by name**:
+
+| Function name (must be `PUBLIC`) | Becomes |
+|---|---|
+| `test*` (case-insensitive) | a registered test case |
+| `setUp` | per-test setup |
+| `tearDown` | per-test teardown |
+| `setUpSuite` | once-before-all |
+| `tearDownSuite` | once-after-all |
+
+```bash
+fglrun bin/fglunit_gen.42m test_Calculator.4gl
+# -> writes test_Calculator.run.4gl (the MAIN + registrations)
+fglcomp -M test_Calculator.run.4gl
+fglrun test_Calculator.run.42m
+```
+
+| Flag | Effect |
+|---|---|
+| `--dir <d>` | Discover every `test_*.4gl` under `<d>` (non-recursive) |
+| `--out <file>` | Output path (single input only; default `<base>.run.4gl`) |
+| `--suite <name>` | Override suite name (default derived from the file name) |
+| `--stdout` | Write the generated runner to stdout |
+| `-h`, `--help` | Usage |
+
+Fixtures and tests **must be `PUBLIC`** so the generated runner can take
+function pointers to them. A duplicate test name or duplicate fixture is a
+hard error (non-zero exit). A module with no `test*` functions is skipped
+with a warning. The generated file carries a `DO NOT EDIT` header; it is
+`.gitignore`d by default (`*.run.4gl`).
+
+### `fglunit-run` — aggregate many suites
+
+Run several compiled suites as child processes and merge them into one
+report and one exit code:
+
+```bash
+fglrun bin/fglunit_run.42m --junit out/junit.xml \
+    test_Calculator.run.42m test_Strings.run.42m
+```
+
+```
+  v Calculator: 8 tests, 0 failed, 0 errors, 0 skipped (0.012 s)
+  v Strings:    5 tests, 0 failed, 0 errors, 0 skipped (0.004 s)
+
+Suites: 2  Tests: 13  Passed: 13  Failed: 0  Errors: 0  Skipped: 0
+```
+
+| Flag | Effect |
+|---|---|
+| `--dir <d>` | Run every `*.run.42m` under `<d>` (non-recursive) |
+| `--junit <file>` | Write the aggregated `<testsuites>` XML |
+| `--filter <pat>` | Passed through to each child suite |
+| `--fail-fast` | Stop after the first failing suite |
+| `-v`, `--verbose` | Echo each child's console output |
+| `--color <mode>` | `auto` (default) \| `always` \| `never` |
+
+Each child runs in its own process, so a suite that **crashes** (abnormal
+exit, no usable JUnit) is reported as an errored suite — with the captured
+output and a retained log path — instead of being silently dropped. Exit
+code is `0` only when every suite passes.
+
+The `examples/` directory shows the full chain (generate → compile →
+aggregate) driven from a `Makefile`.
+
 ## JUnit XML for CI
 
 ```bash
@@ -299,8 +389,13 @@ fglunit unit suites and GGC scenarios side by side.
 
 ## Limitations
 
-- **No function reflection.** Tests must be registered explicitly. This
-  is a BDL language constraint, not an fglunit choice.
+- **No function reflection.** BDL can't enumerate `test*` symbols at
+  runtime, so registration is explicit — either hand-written, or generated
+  at build time by [`fglunit-gen`](#discovery--running-a-whole-test-tree).
+- **Discovery is a line scanner, not a full parser.** `fglunit-gen` reads
+  source text (skipping `{ }` and `--` / `#` comments); exotic formatting
+  may need the hand-written style. It is non-recursive (`--dir` scans one
+  level).
 - **No mocking framework in v1.** Use real (test) databases, real
   fixtures, or hand-rolled test doubles. A stub/spy module may follow
   in v2.

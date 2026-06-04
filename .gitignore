@@ -28,6 +28,9 @@ replay_pid*
 .fglpkg
 fglpkg.lock
 
+# fglunit-gen generated runners
+*.run.4gl
+
 # AI Files
 .mcp.json
 
