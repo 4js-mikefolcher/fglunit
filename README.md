@@ -87,12 +87,14 @@ tools remove that:
 
 ```bash
 # write test_Calculator.4gl as plain PUBLIC FUNCTION test*() — no MAIN
-fglrun bin/fglunit_gen.42m test_Calculator.4gl     # -> test_Calculator.run.4gl
+fglpkg bdl fglunit fglunit_gen test_Calculator.4gl   # -> test_Calculator.run.4gl
 fglcomp -M test_Calculator.run.4gl
-fglrun bin/fglunit_run.42m --junit out.xml test_Calculator.run.42m other.run.42m
+fglpkg bdl fglunit fglunit_run --junit out.xml test_Calculator.run.42m other.run.42m
 ```
 
-The hand-written `MAIN` style above still works unchanged — discovery is
+Both tools ship with the package and run via `fglpkg bdl fglunit <tool>`
+(or directly: `fglrun com/fourjs/fglunit/fglunit_gen.42m …`). The
+hand-written `MAIN` style above still works unchanged — discovery is
 opt-in. See the [User Guide](USERGUIDE.md#discovery--running-a-whole-test-tree)
 for the conventions and full flag list.
 

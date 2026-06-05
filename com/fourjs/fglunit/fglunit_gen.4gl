@@ -1,3 +1,5 @@
+PACKAGE com.fourjs.fglunit
+
 # fglunit-gen — generate xUnit runner modules from test source.
 #
 # A test module is a plain .4gl (no PACKAGE, no MAIN) with PUBLIC FUNCTION
@@ -5,7 +7,8 @@
 # tearDownSuite). For each input this writes a "<base>.run.4gl" runner that
 # registers everything and calls FglUnit.run().
 #
-#   fglrun fglunit_gen.42m [options] <test-source.4gl> ...
+# From an installed package:  fglpkg bdl fglunit fglunit_gen [options] <src>...
+# In-repo / from a build:     fglrun fglunit_gen.42m [options] <src>...
 #     --dir <d>      discover test_*.4gl under <d> (non-recursive)
 #     --out <file>   output path (single input only; default <base>.run.4gl)
 #     --suite <name> override suite name (single input only)

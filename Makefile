@@ -14,14 +14,12 @@ export FGLLDPATH := $(CURDIR):$(FGLLDPATH)
 
 all: build
 
-build: $(MODULES) tools
+# SOURCES globs every .4gl under the package — including the fglunit_gen /
+# fglunit_run program modules, which carry PACKAGE so they self-place here.
+build: $(MODULES)
 
 $(PKG_PATH)/%.42m: $(PKG_PATH)/%.4gl
 	fglcomp -M -Wall $<
-
-# Command-line tools (fglunit-gen, fglunit-run) — need the package first.
-tools: $(MODULES)
-	$(MAKE) -C bin
 
 test: build
 	$(MAKE) -C tests
@@ -37,4 +35,4 @@ clean:
 	find . -name '*.42?' -delete
 	rm -rf .fglpkg fglpkg.lock
 
-.PHONY: all build tools test pack publish-dry clean
+.PHONY: all build test pack publish-dry clean

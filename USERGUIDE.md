@@ -237,7 +237,15 @@ to disable in CI logs.
 
 The hand-written `MAIN` works, but two optional tools remove the
 boilerplate: **`fglunit-gen`** writes the runner for you, and
-**`fglunit-run`** runs many suites into one report. Both are pure BDL.
+**`fglunit-run`** runs many suites into one report. Both are pure BDL,
+ship inside the package, and run via `fglpkg bdl fglunit <tool> …` (or
+directly with `fglrun com/fourjs/fglunit/<tool>.42m …` from a build).
+
+> **Paths under `fglpkg bdl`.** `fglpkg bdl` runs the tool with the working
+> directory set to the installed-package directory, so pass **absolute**
+> file/program paths (or a `--dir <absolute>`). When you invoke the
+> compiled tool directly with `fglrun`, ordinary relative paths work since
+> the working directory is your own.
 
 ### `fglunit-gen` — generate a runner from a test module
 
@@ -268,7 +276,7 @@ The generator discovers symbols **by name**:
 | `tearDownSuite` | once-after-all |
 
 ```bash
-fglrun bin/fglunit_gen.42m test_Calculator.4gl
+fglpkg bdl fglunit fglunit_gen test_Calculator.4gl
 # -> writes test_Calculator.run.4gl (the MAIN + registrations)
 fglcomp -M test_Calculator.run.4gl
 fglrun test_Calculator.run.42m
@@ -294,7 +302,7 @@ Run several compiled suites as child processes and merge them into one
 report and one exit code:
 
 ```bash
-fglrun bin/fglunit_run.42m --junit out/junit.xml \
+fglpkg bdl fglunit fglunit_run --junit out/junit.xml \
     test_Calculator.run.42m test_Strings.run.42m
 ```
 

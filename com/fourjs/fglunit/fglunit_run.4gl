@@ -1,3 +1,5 @@
+PACKAGE com.fourjs.fglunit
+
 # fglunit-run — run many compiled test suites and aggregate one report.
 #
 # Each child is a normal fglunit program (a .42m). The driver runs it with
@@ -6,7 +8,8 @@
 # combined exit code. A child that crashes (no/garbage XML, abnormal exit)
 # is reported as an errored suite rather than silently dropped.
 #
-#   fglrun fglunit_run.42m [options] <program.42m> ...
+# From an installed package:  fglpkg bdl fglunit fglunit_run [options] <prog>...
+# In-repo / from a build:     fglrun fglunit_run.42m [options] <prog>...
 #     --dir <d>       run every *.run.42m under <d> (non-recursive)
 #     --junit <file>  write the aggregated <testsuites> XML
 #     --filter <pat>  passed through to each child suite
@@ -26,6 +29,7 @@ PRIVATE DEFINE progs DYNAMIC ARRAY OF STRING
 PRIVATE DEFINE optJunit, optFilter STRING
 PRIVATE DEFINE optColor STRING
 PRIVATE DEFINE optVerbose, optFailFast BOOLEAN
+PRIVATE DEFINE origLdPath STRING   # FGLLDPATH as inherited, restored per child
 
 MAIN
     DEFINE summaries DYNAMIC ARRAY OF Aggregator.SuiteSummary
@@ -35,6 +39,7 @@ MAIN
     DEFINE suiteFailed, stoppedEarly BOOLEAN
 
     LET optColor = "auto"
+    LET origLdPath = fgl_getenv("FGLLDPATH")
     CALL parseArgs()
 
     IF progs.getLength() == 0 THEN
@@ -72,43 +77,42 @@ END MAIN
 
 # Run one child program and return its (possibly synthesized) summary.
 PRIVATE FUNCTION runOne(prog STRING, idx INTEGER) RETURNS Aggregator.SuiteSummary
-    DEFINE xmlPath, logPath, cmd, xmlText, logText STRING
-    DEFINE raw INTEGER
+    DEFINE xmlPath, cmd, xmlText, console STRING
     DEFINE s Aggregator.SuiteSummary
-    DEFINE parsedOk BOOLEAN
 
     LET xmlPath = tempPath(idx, "xml")
-    LET logPath = tempPath(idx, "log")
-    LET cmd = buildCmd(prog, xmlPath, logPath)
+    LET cmd = buildCmd(prog, xmlPath)
 
-    RUN cmd RETURNING raw
+    # fglrun does not consult FGLLDPATH to locate the child's MAIN module,
+    # but it does for the module's IMPORTs — so put the program's own
+    # directory on FGLLDPATH (ahead of what we inherited) before launching.
+    # Set via fgl_setenv (inherited by the child) rather than a shell-
+    # specific "VAR=val cmd" prefix, so this stays OS-agnostic.
+    CALL fgl_setenv("FGLLDPATH", childLdPath(prog))
+    LET console = runCapture(cmd)
+    CALL fgl_setenv("FGLLDPATH", NVL(origLdPath, ""))
 
     LET xmlText = readFile(xmlPath)
-    LET logText = readFile(logPath)
-
     LET s = Aggregator.parseSuiteXml(xmlText)
-    LET parsedOk = s.valid
-    IF NOT parsedOk THEN
+    IF NOT s.valid THEN
+        # No usable JUnit => the child crashed or never started. Detected by
+        # the absent/invalid file, not by an OS-specific exit-status code.
         LET s = Aggregator.crashedSuite(stem(os.Path.baseName(prog)),
-            SFMT("child '%1' produced no usable JUnit (exit status %2)\n%3",
-                prog, decodeExit(raw), NVL(tailOf(logText), "")))
+            SFMT("child '%1' produced no usable JUnit output\n%2",
+                prog, NVL(tailOf(console), "")))
     END IF
 
-    IF optVerbose AND logText IS NOT NULL AND logText.getLength() > 0 THEN
-        CALL printIndented("    ", logText)
+    IF optVerbose AND console IS NOT NULL AND console.getLength() > 0 THEN
+        CALL printIndented("    ", console)
     END IF
 
     CALL deleteFile(xmlPath)
-    IF parsedOk THEN
-        CALL deleteFile(logPath)
-    ELSE
-        DISPLAY SFMT("    (child log retained: %1)", logPath)
-    END IF
-
     RETURN s
 END FUNCTION
 
-PRIVATE FUNCTION buildCmd(prog STRING, xmlPath STRING, logPath STRING) RETURNS STRING
+# fglrun "<prog>" --junit "<xml>" --color never [opts] 2>&1
+# Quoting and "2>&1" are valid on both POSIX shells and Windows cmd.exe.
+PRIVATE FUNCTION buildCmd(prog STRING, xmlPath STRING) RETURNS STRING
     DEFINE sb base.StringBuffer
     LET sb = base.StringBuffer.create()
     CALL sb.append(SFMT("fglrun \"%1\" --junit \"%2\" --color never", prog, xmlPath))
@@ -118,8 +122,45 @@ PRIVATE FUNCTION buildCmd(prog STRING, xmlPath STRING, logPath STRING) RETURNS S
     IF optVerbose THEN
         CALL sb.append(" -v")
     END IF
-    CALL sb.append(SFMT(" > \"%1\" 2>&1", logPath))
+    CALL sb.append(" 2>&1")   # merge stderr so the pipe captures it too
     RETURN sb.toString()
+END FUNCTION
+
+# Run a command and capture its combined output. openPipe avoids shell
+# redirection operators and temp log files.
+PRIVATE FUNCTION runCapture(cmd STRING) RETURNS STRING
+    DEFINE ch base.Channel
+    DEFINE sb base.StringBuffer
+    DEFINE line STRING
+    LET ch = base.Channel.create()
+    TRY
+        CALL ch.openPipe(cmd, "r")
+    CATCH
+        RETURN NULL
+    END TRY
+    LET sb = base.StringBuffer.create()
+    WHILE TRUE
+        LET line = ch.readLine()
+        IF ch.isEof() THEN EXIT WHILE END IF
+        CALL sb.append(line)
+        CALL sb.append("\n")
+    END WHILE
+    CALL ch.close()
+    RETURN sb.toString()
+END FUNCTION
+
+# The program's own directory, prepended to the inherited FGLLDPATH using
+# the OS path-list separator (":" on Unix, ";" on Windows).
+PRIVATE FUNCTION childLdPath(prog STRING) RETURNS STRING
+    DEFINE dir STRING
+    LET dir = os.Path.dirName(prog)
+    IF dir IS NULL OR dir.getLength() == 0 THEN
+        RETURN NVL(origLdPath, "")
+    END IF
+    IF origLdPath IS NULL OR origLdPath.getLength() == 0 THEN
+        RETURN dir
+    END IF
+    RETURN dir || os.Path.pathSeparator() || origLdPath
 END FUNCTION
 
 # Output ------------------------------------------------------------
@@ -239,17 +280,16 @@ END FUNCTION
 
 # Helpers -----------------------------------------------------------
 
+# A writable temp directory, probed OS-agnostically: TMPDIR (Unix) then
+# TEMP / TMP (Windows), falling back to the current directory. os.Path.join
+# applies the platform directory separator.
 PRIVATE FUNCTION tempPath(idx INTEGER, ext STRING) RETURNS STRING
     DEFINE dir STRING
     LET dir = fgl_getenv("TMPDIR")
-    IF dir IS NULL OR dir.getLength() == 0 THEN LET dir = "/tmp" END IF
+    IF dir IS NULL OR dir.getLength() == 0 THEN LET dir = fgl_getenv("TEMP") END IF
+    IF dir IS NULL OR dir.getLength() == 0 THEN LET dir = fgl_getenv("TMP") END IF
+    IF dir IS NULL OR dir.getLength() == 0 THEN LET dir = os.Path.pwd() END IF
     RETURN os.Path.join(dir, SFMT("fglunit.%1.%2.%3", fgl_getpid(), idx, ext))
-END FUNCTION
-
-# Decode a RUN status: normal exit -> high byte; killed by signal -> low byte.
-PRIVATE FUNCTION decodeExit(raw INTEGER) RETURNS INTEGER
-    IF (raw MOD 256) != 0 THEN RETURN raw MOD 256 END IF
-    RETURN raw / 256
 END FUNCTION
 
 PRIVATE FUNCTION tailOf(s STRING) RETURNS STRING

@@ -7,8 +7,9 @@
 # does this; `make test` from the repo root runs the whole chain).
 
 PKG_ROOT = ..
-GEN = fglrun $(PKG_ROOT)/bin/fglunit_gen.42m
-RUN = fglrun $(PKG_ROOT)/bin/fglunit_run.42m
+TOOLS = $(PKG_ROOT)/com/fourjs/fglunit
+GEN = fglrun $(TOOLS)/fglunit_gen.42m
+RUN = fglrun $(TOOLS)/fglunit_run.42m
 
 export FGLLDPATH := $(PKG_ROOT):.:$(FGLLDPATH)
 

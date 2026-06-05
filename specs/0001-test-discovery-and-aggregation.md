@@ -319,3 +319,24 @@ The framework tests itself — the strongest possible demonstration.
    update the Limitations list.
 
 Each step is independently green, so review can happen incrementally.
+
+## 12. Addendum — packaging & OS-agnosticism (post-approval)
+
+Two requirements surfaced during implementation:
+
+1. **Ship the tools as runnable programs.** The two CLIs live under the
+   package root (`com/fourjs/fglunit/fglunit_gen.4gl` /
+   `fglunit_run.4gl`, each `PACKAGE com.fourjs.fglunit` + `MAIN` so they
+   self-place on compile) and are declared in `fglpkg.json` `programs`.
+   After `fglpkg install fglunit` they run via
+   `fglpkg bdl fglunit fglunit_gen|fglunit_run`. `fglpkg bdl` sets the
+   working directory to the installed-package dir, so paths passed under
+   `bdl` must be absolute; direct `fglrun` keeps normal cwd-relative paths.
+
+2. **OS-agnostic — no Unix-isms.** The driver launches children with
+   portable primitives only: `fgl_setenv("FGLLDPATH", …)` (child inherits;
+   no `VAR=val cmd` prefix), `os.Path.pathSeparator()` for the list
+   separator, `base.Channel.openPipe(… , "r")` for output capture (no `>` /
+   temp log), `TMPDIR`/`TEMP`/`TMP` probing for the temp dir (no hard-coded
+   `/tmp`), and crash detection via the absence of valid JUnit (no Unix
+   `wait()`-status decoding). No reliance on `$PWD`.
