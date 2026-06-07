@@ -7,6 +7,7 @@
   "license": "MIT",
   "docs": ["USERGUIDE.md"],
   "programs": ["fglunit_gen", "fglunit_run"],
+  "repository": "https://github.com/4js-mikefolcher/fglunit",
   "dependencies": {
     "fgl": {}
   }
