@@ -273,8 +273,16 @@ no test ran at all**, `2` on a usage error.
 > and exits `1`. Pass `--allow-empty` where an empty run is legitimate —
 > a suite whose tests are all filtered out by design, say.
 
-Color is auto-detected via `$TERM` — set `TERM=dumb` (or `--color never`)
-to disable in CI logs.
+**Color.** `--color always` and `--color never` are absolute. Under
+`auto` (the default), fglunit disables color when `NO_COLOR` is set to
+anything at all ([no-color.org](https://no-color.org)), and when `TERM`
+is unset or `dumb`.
+
+> `auto` cannot tell a terminal from a redirect. BDL exposes no `isatty`,
+> so `fglrun my_tests.42m > log.txt` still writes escape sequences into
+> the file. Use `--color never` or `NO_COLOR=1` when capturing output.
+> (`fglunit-run` already forces `--color never` on the children it
+> spawns, so aggregated runs are unaffected.)
 
 ## Discovery & running a whole test tree
 

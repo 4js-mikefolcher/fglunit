@@ -22,10 +22,7 @@ PACKAGE com.fourjs.fglunit
 IMPORT os
 IMPORT util
 IMPORT FGL com.fourjs.fglunit.Aggregator
-
-PRIVATE CONSTANT ANSI_RESET = "\x1b[0m"
-PRIVATE CONSTANT ANSI_GREEN = "\x1b[32m"
-PRIVATE CONSTANT ANSI_RED   = "\x1b[31m"
+IMPORT FGL com.fourjs.fglunit.Internal
 
 PRIVATE DEFINE progs DYNAMIC ARRAY OF STRING
 PRIVATE DEFINE optJunit, optFilter STRING
@@ -66,7 +63,7 @@ MAIN
     CALL printSummary(t, stoppedEarly)
 
     IF optJunit IS NOT NULL AND optJunit.getLength() > 0 THEN
-        IF NOT writeFile(optJunit, Aggregator.renderSuites(summaries)) THEN
+        IF NOT Internal.writeFile(optJunit, Aggregator.renderSuites(summaries)) THEN
             DISPLAY SFMT("fglunit-run: cannot write aggregated JUnit '%1'", optJunit)
             EXIT PROGRAM 2
         END IF
@@ -106,7 +103,7 @@ PRIVATE FUNCTION runOne(prog STRING, idx INTEGER) RETURNS Aggregator.SuiteSummar
     LET console = runCapture(cmd)
     CALL fgl_setenv("FGLLDPATH", NVL(origLdPath, ""))
 
-    LET xmlText = readFile(xmlPath)
+    LET xmlText = Internal.readFile(xmlPath)
     LET s = Aggregator.parseSuiteXml(xmlText)
     IF NOT s.valid THEN
         # No usable JUnit => the child crashed or never started. Detected by
@@ -117,10 +114,10 @@ PRIVATE FUNCTION runOne(prog STRING, idx INTEGER) RETURNS Aggregator.SuiteSummar
     END IF
 
     IF optVerbose AND console IS NOT NULL AND console.getLength() > 0 THEN
-        CALL printIndented("    ", console)
+        CALL Internal.printIndented("    ", console)
     END IF
 
-    CALL deleteFile(xmlPath)
+    CALL Internal.deleteFile(xmlPath)
     RETURN s
 END FUNCTION
 
@@ -237,12 +234,12 @@ END FUNCTION
 PRIVATE FUNCTION printProgress(s Aggregator.SuiteSummary)
     DEFINE color, sym STRING
     IF s.failures > 0 OR s.errors > 0 THEN
-        LET color = ANSI_RED LET sym = "x"
+        LET color = Internal.ANSI_RED LET sym = "x"
     ELSE
-        LET color = ANSI_GREEN LET sym = "v"
+        LET color = Internal.ANSI_GREEN LET sym = "v"
     END IF
-    DISPLAY SFMT("  %1%2%3 %4: %5 tests, %6 failed, %7 errors, %8 skipped (%9 s)",
-        on(color), sym, off(),
+    DISPLAY SFMT("  %1 %2: %3 tests, %4 failed, %5 errors, %6 skipped (%7 s)",
+        Internal.colorize(optColor, color, sym),
         s.name, s.tests, s.failures, s.errors, s.skipped, NVL(s.timeSec, "0"))
 END FUNCTION
 
@@ -251,24 +248,17 @@ PRIVATE FUNCTION printSummary(t Aggregator.Totals, stoppedEarly BOOLEAN)
     DEFINE passed INTEGER
     LET passed = t.tests - t.failures - t.errors - t.skipped
     IF t.failures > 0 OR t.errors > 0 THEN
-        LET color = ANSI_RED
+        LET color = Internal.ANSI_RED
     ELSE
-        LET color = ANSI_GREEN
+        LET color = Internal.ANSI_GREEN
     END IF
     DISPLAY ""
     IF stoppedEarly THEN
-        DISPLAY "(stopped early — --fail-fast)"
+        DISPLAY "(stopped early - --fail-fast)"
     END IF
-    DISPLAY SFMT("%1Suites: %2  Tests: %3  Passed: %4  Failed: %5  Errors: %6  Skipped: %7%8",
-        on(color), t.suites, t.tests, passed, t.failures, t.errors, t.skipped, off())
-END FUNCTION
-
-PRIVATE FUNCTION printIndented(indent STRING, body STRING)
-    DEFINE tok base.StringTokenizer
-    LET tok = base.StringTokenizer.create(body, "\n")
-    WHILE tok.hasMoreTokens()
-        DISPLAY indent, tok.nextToken()
-    END WHILE
+    DISPLAY Internal.colorize(optColor, color,
+        SFMT("Suites: %1  Tests: %2  Passed: %3  Failed: %4  Errors: %5  Skipped: %6",
+            t.suites, t.tests, passed, t.failures, t.errors, t.skipped))
 END FUNCTION
 
 # Args --------------------------------------------------------------
@@ -343,7 +333,7 @@ PRIVATE FUNCTION scanDir(dir STRING)
         LET name = os.Path.dirNext(h)
         IF name IS NULL OR name == "" THEN EXIT WHILE END IF
         LET low = name.toLowerCase()
-        IF endsWith(low, ".run.42m") THEN
+        IF Internal.endsWith(low, ".run.42m") THEN
             LET found[found.getLength() + 1] = name
         END IF
     END WHILE
@@ -351,23 +341,9 @@ PRIVATE FUNCTION scanDir(dir STRING)
 
     # dirNext() yields filesystem order, which varies by machine. Sort so
     # the suite order in the aggregated report is reproducible.
-    CALL sortNames(found)
+    CALL Internal.sortNames(found)
     FOR i = 1 TO found.getLength()
         LET progs[progs.getLength() + 1] = os.Path.join(dir, found[i])
-    END FOR
-END FUNCTION
-
-PRIVATE FUNCTION sortNames(names DYNAMIC ARRAY OF STRING)
-    DEFINE i, j INTEGER
-    DEFINE key STRING
-    FOR i = 2 TO names.getLength()
-        LET key = names[i]
-        LET j = i - 1
-        WHILE j >= 1 AND names[j] > key
-            LET names[j + 1] = names[j]
-            LET j = j - 1
-        END WHILE
-        LET names[j + 1] = key
     END FOR
 END FUNCTION
 
@@ -412,95 +388,16 @@ PRIVATE FUNCTION tailOf(s STRING) RETURNS STRING
     RETURN s.subString(s.getLength() - 800 + 1, s.getLength())
 END FUNCTION
 
-PRIVATE FUNCTION readFile(path STRING) RETURNS STRING
-    DEFINE ch base.Channel
-    DEFINE sb base.StringBuffer
-    DEFINE line STRING
-    LET ch = base.Channel.create()
-    TRY
-        CALL ch.openFile(path, "r")
-    CATCH
-        RETURN NULL
-    END TRY
-    LET sb = base.StringBuffer.create()
-    WHILE TRUE
-        LET line = ch.readLine()
-        IF ch.isEof() THEN EXIT WHILE END IF
-        CALL sb.append(line)
-        CALL sb.append("\n")
-    END WHILE
-    CALL ch.close()
-    RETURN sb.toString()
-END FUNCTION
-
-PRIVATE FUNCTION writeFile(path STRING, text STRING) RETURNS BOOLEAN
-    DEFINE ch base.Channel
-    LET ch = base.Channel.create()
-    TRY
-        CALL ch.openFile(path, "w")
-    CATCH
-        RETURN FALSE
-    END TRY
-    IF text.getCharAt(text.getLength()) == "\n" THEN
-        LET text = text.subString(1, text.getLength() - 1)
-    END IF
-    CALL ch.writeLine(text)
-    CALL ch.close()
-    RETURN TRUE
-END FUNCTION
-
-PRIVATE FUNCTION deleteFile(path STRING)
-    DEFINE res INTEGER
-    TRY
-        LET res = os.Path.delete(path)
-    CATCH
-    END TRY
-END FUNCTION
-
-# Strip the compiled-module extension only. Cutting at the first dot
-# turned "my.suite.run.42m" into "my" in crash reports.
 PRIVATE FUNCTION stem(fileName STRING) RETURNS STRING
     DEFINE low STRING
     LET low = fileName.toLowerCase()
-    IF endsWith(low, ".run.42m") THEN
+    IF Internal.endsWith(low, ".run.42m") THEN
         RETURN fileName.subString(1, fileName.getLength() - 8)
     END IF
-    IF endsWith(low, ".42m") THEN
+    IF Internal.endsWith(low, ".42m") THEN
         RETURN fileName.subString(1, fileName.getLength() - 4)
     END IF
     RETURN fileName
-END FUNCTION
-
-PRIVATE FUNCTION endsWith(s STRING, suffix STRING) RETURNS BOOLEAN
-    DEFINE at INTEGER
-    IF s.getLength() < suffix.getLength() THEN RETURN FALSE END IF
-    LET at = s.getLength() - suffix.getLength() + 1
-    RETURN s.subString(at, s.getLength()) == suffix
-END FUNCTION
-
-# Color -------------------------------------------------------------
-
-PRIVATE FUNCTION on(code STRING) RETURNS STRING
-    IF useColor() THEN RETURN code END IF
-    RETURN ""
-END FUNCTION
-
-PRIVATE FUNCTION off() RETURNS STRING
-    IF useColor() THEN RETURN ANSI_RESET END IF
-    RETURN ""
-END FUNCTION
-
-PRIVATE FUNCTION useColor() RETURNS BOOLEAN
-    DEFINE term STRING
-    CASE optColor
-        WHEN "always" RETURN TRUE
-        WHEN "never"  RETURN FALSE
-    END CASE
-    LET term = fgl_getenv("TERM")
-    IF term IS NULL OR term.getLength() == 0 OR term == "dumb" THEN
-        RETURN FALSE
-    END IF
-    RETURN TRUE
 END FUNCTION
 
 PRIVATE FUNCTION usage()

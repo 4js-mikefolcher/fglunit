@@ -17,6 +17,7 @@ PACKAGE com.fourjs.fglunit
 
 IMPORT os
 IMPORT FGL com.fourjs.fglunit.Discovery
+IMPORT FGL com.fourjs.fglunit.Internal
 
 PRIVATE DEFINE inputs DYNAMIC ARRAY OF STRING
 PRIVATE DEFINE optOut, optSuite STRING
@@ -55,7 +56,7 @@ PRIVATE FUNCTION processFile(path STRING) RETURNS BOOLEAN
     DEFINE res Discovery.DiscoveryResult
     DEFINE i INTEGER
 
-    LET src = readFile(path)
+    LET src = Internal.readFile(path)
     IF src IS NULL THEN
         DISPLAY SFMT("fglunit-gen: cannot read '%1'", path)
         RETURN FALSE
@@ -97,7 +98,7 @@ PRIVATE FUNCTION processFile(path STRING) RETURNS BOOLEAN
         LET outPath = defaultOut(path, moduleName)
     END IF
 
-    IF NOT writeFile(outPath, runnerText) THEN
+    IF NOT Internal.writeFile(outPath, runnerText) THEN
         DISPLAY SFMT("fglunit-gen: cannot write '%1'", outPath)
         RETURN FALSE
     END IF
@@ -168,7 +169,7 @@ PRIVATE FUNCTION scanDir(dir STRING)
         LET low = name.toLowerCase()
         IF low.getIndexOf("test", 1) == 1
            AND low.getIndexOf(".run.4gl", 1) == 0
-           AND endsWith(low, ".4gl") THEN
+           AND Internal.endsWith(low, ".4gl") THEN
             LET found[found.getLength() + 1] = name
         END IF
     END WHILE
@@ -177,68 +178,10 @@ PRIVATE FUNCTION scanDir(dir STRING)
     # dirNext() yields entries in filesystem order, which differs between
     # machines. Sort so a directory sweep produces the same suite order —
     # and so the same aggregated report — everywhere.
-    CALL sortNames(found)
+    CALL Internal.sortNames(found)
     FOR i = 1 TO found.getLength()
         LET inputs[inputs.getLength() + 1] = os.Path.join(dir, found[i])
     END FOR
-END FUNCTION
-
-# Insertion sort: directory listings are small and BDL's array sort
-# support varies by version, so this keeps the floor at BDL 4.00.
-PRIVATE FUNCTION sortNames(names DYNAMIC ARRAY OF STRING)
-    DEFINE i, j INTEGER
-    DEFINE key STRING
-    FOR i = 2 TO names.getLength()
-        LET key = names[i]
-        LET j = i - 1
-        WHILE j >= 1 AND names[j] > key
-            LET names[j + 1] = names[j]
-            LET j = j - 1
-        END WHILE
-        LET names[j + 1] = key
-    END FOR
-END FUNCTION
-
-# File I/O ----------------------------------------------------------
-
-PRIVATE FUNCTION readFile(path STRING) RETURNS STRING
-    DEFINE ch base.Channel
-    DEFINE sb base.StringBuffer
-    DEFINE line STRING
-
-    LET ch = base.Channel.create()
-    TRY
-        CALL ch.openFile(path, "r")
-    CATCH
-        RETURN NULL
-    END TRY
-    LET sb = base.StringBuffer.create()
-    WHILE TRUE
-        LET line = ch.readLine()
-        IF ch.isEof() THEN EXIT WHILE END IF
-        CALL sb.append(line)
-        CALL sb.append("\n")
-    END WHILE
-    CALL ch.close()
-    RETURN sb.toString()
-END FUNCTION
-
-PRIVATE FUNCTION writeFile(path STRING, text STRING) RETURNS BOOLEAN
-    DEFINE ch base.Channel
-    LET ch = base.Channel.create()
-    TRY
-        CALL ch.openFile(path, "w")
-    CATCH
-        RETURN FALSE
-    END TRY
-    # renderRunner already terminates every line (including the last) with
-    # "\n"; strip one so writeLine doesn't double the trailing newline.
-    IF text.getCharAt(text.getLength()) == "\n" THEN
-        LET text = text.subString(1, text.getLength() - 1)
-    END IF
-    CALL ch.writeLine(text)
-    CALL ch.close()
-    RETURN TRUE
 END FUNCTION
 
 PRIVATE FUNCTION writeStdout(text STRING)
@@ -262,17 +205,10 @@ END FUNCTION
 
 # Strip a trailing ".4gl" (case-insensitive) from a file name.
 PRIVATE FUNCTION stem(fileName STRING) RETURNS STRING
-    IF endsWith(fileName.toLowerCase(), ".4gl") THEN
+    IF Internal.endsWith(fileName.toLowerCase(), ".4gl") THEN
         RETURN fileName.subString(1, fileName.getLength() - 4)
     END IF
     RETURN fileName
-END FUNCTION
-
-PRIVATE FUNCTION endsWith(s STRING, suffix STRING) RETURNS BOOLEAN
-    DEFINE at INTEGER
-    IF s.getLength() < suffix.getLength() THEN RETURN FALSE END IF
-    LET at = s.getLength() - suffix.getLength() + 1
-    RETURN s.subString(at, s.getLength()) == suffix
 END FUNCTION
 
 PRIVATE FUNCTION usage()

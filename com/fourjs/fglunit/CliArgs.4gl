@@ -91,6 +91,7 @@ PRIVATE FUNCTION printUsage()
     DISPLAY "  --fail-fast          Stop on first failure"
     DISPLAY "  --allow-empty        Exit 0 even when no test ran"
     DISPLAY "  --color <mode>       auto (default) | always | never"
+    DISPLAY "                       auto also honours NO_COLOR and TERM=dumb"
     DISPLAY "  -h, --help           Show this help"
     DISPLAY ""
     DISPLAY "Exit code: 0 when all tests pass, 1 on failure or when no"

@@ -1,6 +1,7 @@
 PACKAGE com.fourjs.fglunit
 
 IMPORT xml
+IMPORT FGL com.fourjs.fglunit.Internal
 
 # Aggregator — the merge core behind the `fglunit_run` driver.
 #
@@ -90,10 +91,10 @@ PUBLIC FUNCTION crashedSuite(suiteName STRING, message STRING) RETURNS SuiteSumm
 
     LET sb = base.StringBuffer.create()
     CALL sb.append(SFMT("<testsuite name=%1 tests=\"1\" failures=\"0\" errors=\"1\" skipped=\"0\" time=\"0\">",
-        attr(s.name)))
-    CALL sb.append(SFMT("<testcase name=\"(suite)\" classname=%1 time=\"0\">", attr(s.name)))
+        Internal.xmlAttr(s.name)))
+    CALL sb.append(SFMT("<testcase name=\"(suite)\" classname=%1 time=\"0\">", Internal.xmlAttr(s.name)))
     CALL sb.append(SFMT("<error message=%1>%2</error>",
-        attr(firstLine(message)), esc(NVL(message, "suite crashed"))))
+        Internal.xmlAttr(Internal.firstLine(message)), Internal.xmlText(NVL(message, "suite crashed"))))
     CALL sb.append("</testcase></testsuite>")
     LET s.xml = sb.toString()
     RETURN s
@@ -118,7 +119,7 @@ PUBLIC FUNCTION renderSuites(suites DYNAMIC ARRAY OF SuiteSummary) RETURNS STRIN
     LET sb = base.StringBuffer.create()
     CALL sb.append("<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n")
     CALL sb.append(SFMT("<testsuites tests=\"%1\" failures=\"%2\" errors=\"%3\" skipped=\"%4\" time=\"%5\">\n",
-        tests, failures, errors, skipped, fmtSec(totalTime)))
+        tests, failures, errors, skipped, Internal.formatSeconds(totalTime)))
     FOR i = 1 TO suites.getLength()
         CALL sb.append("  ")
         CALL sb.append(suites[i].xml)
@@ -178,55 +179,4 @@ PRIVATE FUNCTION toDec(v STRING) RETURNS DECIMAL(18,3)
     END TRY
     IF d IS NULL THEN RETURN 0 END IF
     RETURN d
-END FUNCTION
-
-PRIVATE FUNCTION fmtSec(secs DECIMAL(18,3)) RETURNS STRING
-    RETURN secs USING "<<<<<<<<<<<<<<<<<&.&&&"
-END FUNCTION
-
-PRIVATE FUNCTION attr(v STRING) RETURNS STRING
-    RETURN "\"" || esc(NVL(v, "")) || "\""
-END FUNCTION
-
-PRIVATE FUNCTION esc(v STRING) RETURNS STRING
-    # Strip illegal characters before escaping — see xmlClean below.
-    LET v = xmlClean(v)
-    LET v = v.replaceAll("&", "&amp;")
-    LET v = v.replaceAll("<", "&lt;")
-    LET v = v.replaceAll(">", "&gt;")
-    LET v = v.replaceAll("\"", "&quot;")
-    RETURN v
-END FUNCTION
-
-# Drop the characters XML 1.0 forbids outright: the C0 controls other
-# than tab, LF and CR. They have no escape form — numeric character
-# references are illegal for them too — so the only options are to strip
-# them or to emit a document no parser will accept. A failure message
-# quoting ANSI-coloured or binary output would otherwise poison the whole
-# report, exactly when it is most needed.
-#
-# NOTE: Reporter.xmlClean is the same function. Keep the two in step.
-PRIVATE FUNCTION xmlClean(v STRING) RETURNS STRING
-    DEFINE sb base.StringBuffer
-    DEFINE i, n INTEGER
-    DEFINE c STRING
-
-    LET n = v.getLength()
-    LET sb = base.StringBuffer.create()
-    FOR i = 1 TO n
-        LET c = v.subString(i, i)
-        IF c < " " AND c != "\t" AND c != "\n" AND c != "\r" THEN
-            CONTINUE FOR
-        END IF
-        CALL sb.append(c)
-    END FOR
-    RETURN sb.toString()
-END FUNCTION
-
-PRIVATE FUNCTION firstLine(s STRING) RETURNS STRING
-    DEFINE nl INTEGER
-    IF s IS NULL THEN RETURN "" END IF
-    LET nl = s.getIndexOf("\n", 1)
-    IF nl == 0 THEN RETURN s END IF
-    RETURN s.subString(1, nl - 1)
 END FUNCTION
