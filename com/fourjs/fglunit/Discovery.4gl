@@ -205,49 +205,96 @@ PRIVATE FUNCTION classify(name STRING) RETURNS STRING
     RETURN ""
 END FUNCTION
 
-# Remove { } block comments (preserving newlines so line numbers/splitting
-# survive) and -- / # line comments. Block comments are not nested in BDL.
+# Remove { } block comments and -- / # line comments, leaving one output
+# line per input line. Block comments are not nested in BDL.
+#
+# Splitting into lines first is what keeps this linear. STRING is indexed
+# by character, so src.subString(i, i) rescans from the start of the
+# string; running that over a whole file is quadratic (a 116 KB module
+# measured at 27 s). Per line, each scan is bounded by the line length.
 PRIVATE FUNCTION stripComments(src STRING) RETURNS STRING
     DEFINE sb base.StringBuffer
-    DEFINE i, n INTEGER
-    DEFINE c STRING
+    DEFINE tok base.StringTokenizer
+    DEFINE cleaned STRING
     DEFINE inBlock BOOLEAN
 
     LET sb = base.StringBuffer.create()
-    LET n = src.getLength()
+    LET inBlock = FALSE
+    # "\r" is a delimiter too, so CRLF sources do not leave a stray
+    # carriage return glued to the last token on every line.
+    LET tok = base.StringTokenizer.create(src, "\n\r")
+    WHILE tok.hasMoreTokens()
+        CALL stripLine(tok.nextToken(), inBlock) RETURNING cleaned, inBlock
+        CALL sb.append(cleaned)
+        CALL sb.append("\n")
+    END WHILE
+    RETURN sb.toString()
+END FUNCTION
+
+# Strip comments from a single line. `inBlock` is the block-comment state
+# on entry; the second return value is the state on exit.
+#
+# String literals are tracked so that punctuation inside a quoted string
+# is not mistaken for a comment. Without this, a single `{` in a string
+# ("LET s = \"{\"") opened a block comment that swallowed the rest of the
+# file — every test function after it vanished from the generated runner
+# with no error and a zero exit code.
+PRIVATE FUNCTION stripLine(ln STRING, inBlock BOOLEAN) RETURNS (STRING, BOOLEAN)
+    DEFINE sb base.StringBuffer
+    DEFINE i, n INTEGER
+    DEFINE c, quote STRING
+
+    LET sb = base.StringBuffer.create()
+    LET n = ln.getLength()
     LET i = 1
     WHILE i <= n
-        LET c = src.subString(i, i)
+        LET c = ln.subString(i, i)
+
         IF inBlock THEN
-            IF c == "}" THEN
-                LET inBlock = FALSE
-            ELSE IF c == "\n" THEN
-                CALL sb.append("\n")   # keep line structure
-            END IF
-            END IF
+            IF c == "}" THEN LET inBlock = FALSE END IF
             LET i = i + 1
             CONTINUE WHILE
         END IF
+
+        IF quote IS NOT NULL THEN
+            # Inside a literal: copy verbatim until the matching quote.
+            # A backslash escapes the next character (including a quote),
+            # so consume both together.
+            CALL sb.append(c)
+            IF c == "\\" AND i < n THEN
+                CALL sb.append(ln.subString(i + 1, i + 1))
+                LET i = i + 2
+                CONTINUE WHILE
+            END IF
+            IF c == quote THEN LET quote = NULL END IF
+            LET i = i + 1
+            CONTINUE WHILE
+        END IF
+
+        # BDL literals are delimited by ", ' or a backquote (raw string).
+        # None of them span a line, so `quote` resets on the next line.
+        IF c == "\"" OR c == "'" OR c == "`" THEN
+            LET quote = c
+            CALL sb.append(c)
+            LET i = i + 1
+            CONTINUE WHILE
+        END IF
+
         IF c == "{" THEN
             LET inBlock = TRUE
             LET i = i + 1
             CONTINUE WHILE
         END IF
-        # line comments: "--" or "#" run to end of line
-        IF c == "#" THEN
-            WHILE i <= n AND src.subString(i, i) != "\n"
-                LET i = i + 1
-            END WHILE
-            CONTINUE WHILE
+
+        # "#" and "--" run to end of line
+        IF c == "#" THEN EXIT WHILE END IF
+        IF c == "-" AND i < n AND ln.subString(i + 1, i + 1) == "-" THEN
+            EXIT WHILE
         END IF
-        IF c == "-" AND i < n AND src.subString(i + 1, i + 1) == "-" THEN
-            WHILE i <= n AND src.subString(i, i) != "\n"
-                LET i = i + 1
-            END WHILE
-            CONTINUE WHILE
-        END IF
+
         CALL sb.append(c)
         LET i = i + 1
     END WHILE
-    RETURN sb.toString()
+
+    RETURN sb.toString(), inBlock
 END FUNCTION

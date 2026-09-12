@@ -14,6 +14,8 @@ MAIN
     CALL FglUnit.register("invalid_xml_is_invalid",   FUNCTION test_invalid_xml_is_invalid)
     CALL FglUnit.register("empty_xml_is_invalid",     FUNCTION test_empty_xml_is_invalid)
     CALL FglUnit.register("crashed_suite_is_an_error", FUNCTION test_crashed_suite_is_an_error)
+    CALL FglUnit.register("crashed_suite_strips_control_chars",
+        FUNCTION test_crashed_suite_strips_control_chars)
     CALL FglUnit.register("totals_sum_across_suites", FUNCTION test_totals_sum_across_suites)
     CALL FglUnit.register("render_wraps_in_testsuites", FUNCTION test_render_wraps_in_testsuites)
     CALL FglUnit.register("render_sums_root_totals",  FUNCTION test_render_sums_root_totals)
@@ -71,6 +73,21 @@ PUBLIC FUNCTION test_crashed_suite_is_an_error()
     CALL Assertions.assertEqualsInt(1, s.tests, "one synthetic testcase")
     CALL Assertions.assertContains(s.xml, "<error", "carries an <error> element")
     CALL Assertions.assertContains(s.xml, "BoomSuite", "names the suite")
+END FUNCTION
+
+# A crashed child's console output is embedded verbatim, and console
+# output routinely carries ANSI escapes. XML 1.0 has no representation
+# for a C0 control character — not even a numeric reference — so leaving
+# one in produces a document no CI reporter can read.
+PUBLIC FUNCTION test_crashed_suite_strips_control_chars()
+    DEFINE s Aggregator.SuiteSummary
+    DEFINE msg STRING
+    LET msg = "before:", ASCII 27, "[31m:after"
+    LET s = Aggregator.crashedSuite("Boom", msg)
+    CALL Assertions.assertNotContains(s.xml, ASCII 27,
+        "ESC must not reach the XML")
+    CALL Assertions.assertContains(s.xml, "before:", "text before it is kept")
+    CALL Assertions.assertContains(s.xml, ":after", "text after it is kept")
 END FUNCTION
 
 PUBLIC FUNCTION test_totals_sum_across_suites()

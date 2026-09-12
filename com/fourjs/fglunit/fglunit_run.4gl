@@ -110,20 +110,75 @@ PRIVATE FUNCTION runOne(prog STRING, idx INTEGER) RETURNS Aggregator.SuiteSummar
     RETURN s
 END FUNCTION
 
-# fglrun "<prog>" --junit "<xml>" --color never [opts] 2>&1
-# Quoting and "2>&1" are valid on both POSIX shells and Windows cmd.exe.
+# fglrun <prog> --junit <xml> --color never [opts] 2>&1
+#
+# openPipe() hands this string to a shell, so every interpolated value
+# must be quoted by shellArg() — never embedded raw. "2>&1" is valid on
+# both POSIX shells and Windows cmd.exe.
 PRIVATE FUNCTION buildCmd(prog STRING, xmlPath STRING) RETURNS STRING
     DEFINE sb base.StringBuffer
     LET sb = base.StringBuffer.create()
-    CALL sb.append(SFMT("fglrun \"%1\" --junit \"%2\" --color never", prog, xmlPath))
+    CALL sb.append(SFMT("fglrun %1 --junit %2 --color never",
+        shellArg("program path", prog),
+        shellArg("temporary file path", xmlPath)))
     IF optFilter IS NOT NULL AND optFilter.getLength() > 0 THEN
-        CALL sb.append(SFMT(" --filter \"%1\"", optFilter))
+        CALL sb.append(SFMT(" --filter %1", shellArg("--filter", optFilter)))
     END IF
     IF optVerbose THEN
         CALL sb.append(" -v")
     END IF
     CALL sb.append(" 2>&1")   # merge stderr so the pipe captures it too
     RETURN sb.toString()
+END FUNCTION
+
+# Quote one value for the shell that openPipe() runs the command through.
+#
+# Program paths and filter patterns arrive from argv, and a CI pipeline
+# may well build a filter out of a branch name or a PR title. Interpolated
+# raw, a value like `$(rm -rf .)` or `x"; cmd; echo "` runs as a command;
+# the double quotes previously used here stop neither on a POSIX shell.
+#
+# POSIX: single quotes make every character literal, so an embedded single
+# quote is the only way out. cmd.exe: double quotes are the only quoting
+# available, and %VAR% still expands inside them. Characters that quoting
+# cannot neutralize are refused rather than passed through — a test filter
+# is never worth a shell escape.
+PRIVATE FUNCTION shellArg(what STRING, value STRING) RETURNS STRING
+    IF value IS NULL THEN LET value = "" END IF
+
+    IF isWindows() THEN
+        IF containsAnyOf(value, "\"%\n\r") THEN
+            CALL rejectArg(what, value)
+        END IF
+        RETURN "\"" || value || "\""
+    END IF
+
+    IF containsAnyOf(value, "'\n\r") THEN
+        CALL rejectArg(what, value)
+    END IF
+    RETURN "'" || value || "'"
+END FUNCTION
+
+PRIVATE FUNCTION rejectArg(what STRING, value STRING)
+    DISPLAY SFMT("fglunit-run: refusing to run: the %1 contains a character "
+                 || "that cannot be quoted safely for the shell: <%2>", what, value)
+    EXIT PROGRAM 2
+END FUNCTION
+
+PRIVATE FUNCTION containsAnyOf(value STRING, chars STRING) RETURNS BOOLEAN
+    DEFINE i INTEGER
+    FOR i = 1 TO chars.getLength()
+        IF value.getIndexOf(chars.subString(i, i), 1) > 0 THEN
+            RETURN TRUE
+        END IF
+    END FOR
+    RETURN FALSE
+END FUNCTION
+
+# ";" is the PATH-list separator on Windows only; os.Path has no direct
+# platform predicate. childLdPath() already depends on this distinction.
+PRIVATE FUNCTION isWindows() RETURNS BOOLEAN
+    RETURN os.Path.pathSeparator() == ";"
 END FUNCTION
 
 # Run a command and capture its combined output. openPipe avoids shell

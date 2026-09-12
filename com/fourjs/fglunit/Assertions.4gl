@@ -14,20 +14,32 @@ IMPORT util
 # First failure wins (JUnit convention). Subsequent assertions in the
 # same test still execute (and still produce output), but only the
 # first is recorded against the test.
+#
+# NULL handling: every assertion treats NULL as equal to NULL and
+# unequal to any other value, and reports it as <NULL> in the failure
+# message. This is deliberate — BDL's comparison operators yield false
+# for *both* `NULL = x` and `NULL != x`, so an assertion written the
+# obvious way passes when handed a NULL.
 
 PRIVATE CONSTANT STACK_DEPTH_CALLER = 2
 
 # Public assertions -------------------------------------------------
 
+# NULL is neither TRUE nor FALSE, so assertTrue(NULL) and
+# assertFalse(NULL) both fail. The NULL test has to be explicit: BDL
+# evaluates `NOT NULL` and `IF NULL` as false, so without it a NULL
+# condition slips through the failure branch and reports a pass.
 PUBLIC FUNCTION assertTrue(cond BOOLEAN, msg STRING)
-    IF NOT cond THEN
-        CALL failWith(SFMT("assertTrue failed: %1", NVL(msg, "")))
+    IF cond IS NULL OR NOT cond THEN
+        CALL failWith(SFMT("assertTrue failed: %1\n  value was: <%2>",
+            NVL(msg, ""), boolStr(cond)))
     END IF
 END FUNCTION
 
 PUBLIC FUNCTION assertFalse(cond BOOLEAN, msg STRING)
-    IF cond THEN
-        CALL failWith(SFMT("assertFalse failed: %1", NVL(msg, "")))
+    IF cond IS NULL OR cond THEN
+        CALL failWith(SFMT("assertFalse failed: %1\n  value was: <%2>",
+            NVL(msg, ""), boolStr(cond)))
     END IF
 END FUNCTION
 
@@ -46,20 +58,38 @@ PUBLIC FUNCTION assertNotEquals(a STRING, b STRING, msg STRING)
 END FUNCTION
 
 PUBLIC FUNCTION assertEqualsInt(expected INTEGER, actual INTEGER, msg STRING)
-    IF expected != actual THEN
+    IF NOT intEquals(expected, actual) THEN
         CALL failWith(SFMT("assertEqualsInt failed: %1\n  expected: %2\n  actual:   %3",
-            NVL(msg, ""), expected, actual))
+            NVL(msg, ""), intStr(expected), intStr(actual)))
     END IF
 END FUNCTION
 
 PUBLIC FUNCTION assertEqualsDec(expected DECIMAL(32,10), actual DECIMAL(32,10),
                                 tolerance DECIMAL(32,10), msg STRING)
-    DEFINE diff DECIMAL(32,10)
+    DEFINE diff, tol DECIMAL(32,10)
+
+    # NULL has to short-circuit before the arithmetic: `NULL - 5` is
+    # NULL, and `NULL > tolerance` is false, so a NULL operand would
+    # otherwise sail past the comparison and report a pass.
+    IF expected IS NULL OR actual IS NULL THEN
+        IF expected IS NULL AND actual IS NULL THEN
+            RETURN
+        END IF
+        CALL failWith(SFMT("assertEqualsDec failed: %1\n  expected: %2\n  actual:   %3",
+            NVL(msg, ""), decStr(expected), decStr(actual)))
+        RETURN
+    END IF
+
+    # A NULL tolerance would make every comparison false; treat it as an
+    # exact-match request.
+    LET tol = NVL(tolerance, 0)
+    IF tol < 0 THEN LET tol = -tol END IF
+
     LET diff = expected - actual
     IF diff < 0 THEN LET diff = -diff END IF
-    IF diff > tolerance THEN
+    IF diff > tol THEN
         CALL failWith(SFMT("assertEqualsDec failed: %1\n  expected: %2\n  actual:   %3\n  tolerance: %4",
-            NVL(msg, ""), expected, actual, tolerance))
+            NVL(msg, ""), decStr(expected), decStr(actual), decStr(tol)))
     END IF
 END FUNCTION
 
@@ -180,9 +210,35 @@ PRIVATE FUNCTION captureCaller(depth INTEGER) RETURNS STRING
     RETURN ""
 END FUNCTION
 
-# STRING equality that treats NULL as equal to NULL.
+# Equality helpers that treat NULL as equal to NULL and unequal to
+# everything else. BDL's own comparison operators return false for both
+# cases, which would silently turn a NULL mismatch into a passing test.
 PRIVATE FUNCTION stringEquals(a STRING, b STRING) RETURNS BOOLEAN
     IF a IS NULL AND b IS NULL THEN RETURN TRUE END IF
     IF a IS NULL OR b IS NULL THEN RETURN FALSE END IF
     RETURN a = b
+END FUNCTION
+
+PRIVATE FUNCTION intEquals(a INTEGER, b INTEGER) RETURNS BOOLEAN
+    IF a IS NULL AND b IS NULL THEN RETURN TRUE END IF
+    IF a IS NULL OR b IS NULL THEN RETURN FALSE END IF
+    RETURN a = b
+END FUNCTION
+
+# Renderers that make a NULL visible in the failure message — SFMT
+# formats a NULL number as an empty string, which reads as a blank.
+PRIVATE FUNCTION intStr(v INTEGER) RETURNS STRING
+    IF v IS NULL THEN RETURN "NULL" END IF
+    RETURN v
+END FUNCTION
+
+PRIVATE FUNCTION decStr(v DECIMAL(32,10)) RETURNS STRING
+    IF v IS NULL THEN RETURN "NULL" END IF
+    RETURN v
+END FUNCTION
+
+PRIVATE FUNCTION boolStr(v BOOLEAN) RETURNS STRING
+    IF v IS NULL THEN RETURN "NULL" END IF
+    IF v THEN RETURN "TRUE" END IF
+    RETURN "FALSE"
 END FUNCTION

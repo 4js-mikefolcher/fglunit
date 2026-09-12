@@ -203,6 +203,9 @@ PRIVATE FUNCTION xmlText(v STRING) RETURNS STRING
 END FUNCTION
 
 PRIVATE FUNCTION xmlEscape(v STRING) RETURNS STRING
+    # Strip illegal characters before escaping — escaping cannot rescue
+    # them, and they would make the document unparseable.
+    LET v = xmlClean(v)
     # `&` MUST come first, else subsequent replacements get re-escaped.
     # replaceAll takes a regex and a replacement; `&`, `<`, `>`, `"`
     # have no regex meaning, so we can pass them literally. The
@@ -212,6 +215,31 @@ PRIVATE FUNCTION xmlEscape(v STRING) RETURNS STRING
     LET v = v.replaceAll(">", "&gt;")
     LET v = v.replaceAll("\"", "&quot;")
     RETURN v
+END FUNCTION
+
+# Drop the characters XML 1.0 forbids outright: the C0 controls other
+# than tab, LF and CR. They have no escape form — numeric character
+# references are illegal for them too — so the only options are to strip
+# them or to emit a document no parser will accept. A failure message
+# quoting ANSI-coloured or binary output would otherwise poison the whole
+# report, exactly when it is most needed.
+#
+# NOTE: Aggregator.xmlClean is the same function. Keep the two in step.
+PRIVATE FUNCTION xmlClean(v STRING) RETURNS STRING
+    DEFINE sb base.StringBuffer
+    DEFINE i, n INTEGER
+    DEFINE c STRING
+
+    LET n = v.getLength()
+    LET sb = base.StringBuffer.create()
+    FOR i = 1 TO n
+        LET c = v.subString(i, i)
+        IF c < " " AND c != "\t" AND c != "\n" AND c != "\r" THEN
+            CONTINUE FOR
+        END IF
+        CALL sb.append(c)
+    END FOR
+    RETURN sb.toString()
 END FUNCTION
 
 # Formatting helpers -----------------------------------------------

@@ -28,6 +28,14 @@ test: build
 pack:
 	fglpkg pack --list
 
+# fglunit supports Genero BDL 4.00 and newer (util.Regexp and
+# STRING.replaceAll both arrived in 4.00). The package ships compiled
+# .42m modules, and fglpkg fans out one variant per Genero major at
+# publish time — but only for the toolchains present on the publishing
+# machine. Publish from an environment carrying 4.x, 5.x AND 6.x, or the
+# upload silently covers only the version you happen to have installed.
+# `fglpkg pack --list` names the variant it built; check it before
+# publishing.
 publish-dry:
 	fglpkg publish --dry-run
 

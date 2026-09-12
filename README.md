@@ -14,6 +14,11 @@ test suite through `ggcadmin`, a TCP handshake, and a no-op target program.
 `fglunit` fills the unit-test gap. GGC stays the right tool for form- and
 dialog-level integration testing.
 
+## Requirements
+
+Genero BDL **4.00 or newer** — `fglunit` uses `util.Regexp` (`assertMatches`)
+and `STRING.replaceAll` (JUnit XML escaping), both introduced in 4.00.
+
 ## Install
 
 ```bash
@@ -26,6 +31,15 @@ eval "$(fglpkg env --local)"
 ```4gl
 IMPORT FGL com.fourjs.fglunit.FglUnit
 IMPORT FGL com.fourjs.fglunit.Assertions
+IMPORT FGL com.fourjs.fglunit.CliArgs
+
+MAIN                                   -- MAIN comes before any FUNCTION
+    CALL CliArgs.parse()               -- enables the flags listed below
+    CALL FglUnit.suite("basic math")
+    CALL FglUnit.register("test_addition",        FUNCTION test_addition)
+    CALL FglUnit.register("test_string_contains", FUNCTION test_string_contains)
+    EXIT PROGRAM FglUnit.run()
+END MAIN
 
 PUBLIC FUNCTION test_addition()
     CALL Assertions.assertEqualsInt(4, 2 + 2, "2 + 2 should equal 4")
@@ -34,13 +48,6 @@ END FUNCTION
 PUBLIC FUNCTION test_string_contains()
     CALL Assertions.assertContains("hello world", "world", "substring match")
 END FUNCTION
-
-MAIN
-    CALL FglUnit.suite("basic math")
-    CALL FglUnit.register("test_addition",       FUNCTION test_addition)
-    CALL FglUnit.register("test_string_contains", FUNCTION test_string_contains)
-    EXIT PROGRAM FglUnit.run()
-END MAIN
 ```
 
 Run it:
@@ -54,8 +61,8 @@ Output:
 
 ```
 basic math
-  ✓ test_addition (0 ms)
-  ✓ test_string_contains (0 ms)
+  v test_addition
+  v test_string_contains
 
 Tests: 2  Passed: 2  Failed: 0  Errors: 0  Skipped: 0  Time: 1 ms
 ```

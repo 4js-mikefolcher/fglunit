@@ -62,6 +62,24 @@ MAIN
         FUNCTION test_assertMatches_nomatch_trips)
     CALL FglUnit.register("assertThrows_on_silent_fn_trips",
         FUNCTION test_assertThrows_on_silent_fn_trips)
+    # Meta — NULL arguments must trip, never pass silently --------
+    CALL FglUnit.register("assertTrue_null_trips",
+        FUNCTION test_assertTrue_null_trips)
+    CALL FglUnit.register("assertFalse_null_trips",
+        FUNCTION test_assertFalse_null_trips)
+    CALL FglUnit.register("assertEqualsInt_null_vs_value_trips",
+        FUNCTION test_assertEqualsInt_null_vs_value_trips)
+    CALL FglUnit.register("assertEqualsInt_null_equals_null_passes",
+        FUNCTION test_assertEqualsInt_null_equals_null_passes)
+    CALL FglUnit.register("assertEqualsInt_value_vs_null_trips",
+        FUNCTION test_assertEqualsInt_value_vs_null_trips)
+    CALL FglUnit.register("assertEqualsDec_null_vs_value_trips",
+        FUNCTION test_assertEqualsDec_null_vs_value_trips)
+    CALL FglUnit.register("assertEqualsDec_null_equals_null_passes",
+        FUNCTION test_assertEqualsDec_null_equals_null_passes)
+    CALL FglUnit.register("assertEqualsDec_null_tolerance_is_exact",
+        FUNCTION test_assertEqualsDec_null_tolerance_is_exact)
+
     CALL FglUnit.register("fail_trips",
         FUNCTION test_fail_trips)
 
@@ -206,6 +224,83 @@ PUBLIC FUNCTION test_fail_trips()
     CALL Assertions.fail("intentional")
     CALL Assertions.assertTrue(FglUnit.takeFailure(),
         "fail() should trip failure flag")
+END FUNCTION
+
+# NULL arguments ---------------------------------------------------
+#
+# BDL yields false for both `NULL = x` and `NULL != x`, so an assertion
+# written the obvious way reports a PASS when handed a NULL. These lock
+# in the explicit NULL tests in Assertions.4gl — without them a NULL
+# leaking out of the code under test is invisible.
+#
+# Every NULL is assigned explicitly: BDL initializes BOOLEAN to FALSE
+# and INTEGER to 0, so relying on a bare DEFINE would quietly test the
+# ordinary mismatch path instead of the NULL path.
+
+PUBLIC FUNCTION test_assertTrue_null_trips()
+    DEFINE b BOOLEAN
+    LET b = NULL
+    CALL Assertions.assertTrue(b, "should trip")
+    CALL Assertions.assertTrue(FglUnit.takeFailure(),
+        "assertTrue(NULL) should trip failure flag")
+END FUNCTION
+
+PUBLIC FUNCTION test_assertFalse_null_trips()
+    DEFINE b BOOLEAN
+    LET b = NULL
+    CALL Assertions.assertFalse(b, "should trip")
+    CALL Assertions.assertTrue(FglUnit.takeFailure(),
+        "assertFalse(NULL) should trip failure flag")
+END FUNCTION
+
+PUBLIC FUNCTION test_assertEqualsInt_null_vs_value_trips()
+    DEFINE n INTEGER
+    LET n = NULL
+    CALL Assertions.assertEqualsInt(n, 5, "should trip")
+    CALL Assertions.assertTrue(FglUnit.takeFailure(),
+        "assertEqualsInt(NULL, 5) should trip failure flag")
+END FUNCTION
+
+PUBLIC FUNCTION test_assertEqualsInt_null_equals_null_passes()
+    DEFINE a, b INTEGER
+    LET a = NULL
+    LET b = NULL
+    CALL Assertions.assertEqualsInt(a, b, "NULL equals NULL")
+    CALL Assertions.assertFalse(FglUnit.takeFailure(),
+        "assertEqualsInt(NULL, NULL) should not trip")
+END FUNCTION
+
+PUBLIC FUNCTION test_assertEqualsInt_value_vs_null_trips()
+    DEFINE n INTEGER
+    LET n = NULL
+    CALL Assertions.assertEqualsInt(5, n, "should trip")
+    CALL Assertions.assertTrue(FglUnit.takeFailure(),
+        "assertEqualsInt(5, NULL) should trip failure flag")
+END FUNCTION
+
+PUBLIC FUNCTION test_assertEqualsDec_null_vs_value_trips()
+    DEFINE d DECIMAL(32,10)
+    LET d = NULL
+    CALL Assertions.assertEqualsDec(d, 5, 0.01, "should trip")
+    CALL Assertions.assertTrue(FglUnit.takeFailure(),
+        "assertEqualsDec(NULL, 5) should trip failure flag")
+END FUNCTION
+
+PUBLIC FUNCTION test_assertEqualsDec_null_equals_null_passes()
+    DEFINE a, b DECIMAL(32,10)
+    LET a = NULL
+    LET b = NULL
+    CALL Assertions.assertEqualsDec(a, b, 0.01, "NULL equals NULL")
+    CALL Assertions.assertFalse(FglUnit.takeFailure(),
+        "assertEqualsDec(NULL, NULL) should not trip")
+END FUNCTION
+
+PUBLIC FUNCTION test_assertEqualsDec_null_tolerance_is_exact()
+    DEFINE tol DECIMAL(32,10)
+    LET tol = NULL
+    CALL Assertions.assertEqualsDec(1.0, 1.5, tol, "should trip")
+    CALL Assertions.assertTrue(FglUnit.takeFailure(),
+        "a NULL tolerance must mean exact match, not match-anything")
 END FUNCTION
 
 # Framework behavior -----------------------------------------------

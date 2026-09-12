@@ -17,6 +17,12 @@ MAIN
     CALL FglUnit.register("absent_fixtures_are_false", FUNCTION test_absent_fixtures_are_false)
     CALL FglUnit.register("skips_line_comments",       FUNCTION test_skips_line_comments)
     CALL FglUnit.register("skips_block_comments",      FUNCTION test_skips_block_comments)
+    CALL FglUnit.register("brace_in_string_is_not_a_comment",
+        FUNCTION test_brace_in_string_is_not_a_comment)
+    CALL FglUnit.register("hash_and_dashes_in_string_survive",
+        FUNCTION test_hash_and_dashes_in_string_survive)
+    CALL FglUnit.register("escaped_quote_in_string_survives",
+        FUNCTION test_escaped_quote_in_string_survives)
     CALL FglUnit.register("ignores_non_test_public",   FUNCTION test_ignores_non_test_public)
     CALL FglUnit.register("case_insensitive_keywords", FUNCTION test_case_insensitive_keywords)
     CALL FglUnit.register("duplicate_test_errors",     FUNCTION test_duplicate_test_errors)
@@ -99,6 +105,53 @@ PUBLIC FUNCTION test_skips_block_comments()
     LET res = Discovery.parseSource(src)
     CALL Assertions.assertEqualsInt(1, res.tests.getLength(), "block-commented test ignored")
     CALL Assertions.assertEquals("test_after_block", res.tests[1], "test after close brace found")
+END FUNCTION
+
+# String literals are not comments ---------------------------------
+#
+# A lone "{" inside a string literal used to open a block comment that
+# swallowed the rest of the file: every later test vanished from the
+# generated runner, with no error and a zero exit code. Silent test loss
+# is the worst failure this tool can have, so these pin it down.
+
+PUBLIC FUNCTION test_brace_in_string_is_not_a_comment()
+    DEFINE src STRING
+    DEFINE res Discovery.DiscoveryResult
+    LET src = ln("PUBLIC FUNCTION test_alpha()")
+        || ln("    LET s = \"{\"")
+        || ln("END FUNCTION")
+        || ln("PUBLIC FUNCTION test_beta()")
+        || ln("END FUNCTION")
+    LET res = Discovery.parseSource(src)
+    CALL Assertions.assertNull(res.errorMsg, "no error expected")
+    CALL Assertions.assertEqualsInt(2, res.tests.getLength(),
+        "an unmatched brace inside a string must not hide later tests")
+    CALL Assertions.assertEquals("test_beta", res.tests[2], "second test survives")
+END FUNCTION
+
+PUBLIC FUNCTION test_hash_and_dashes_in_string_survive()
+    DEFINE src STRING
+    DEFINE res Discovery.DiscoveryResult
+    LET src = ln("PUBLIC FUNCTION test_hash()  LET s = \"a#b\"  END FUNCTION")
+        || ln("PUBLIC FUNCTION test_dashes() LET s = \"a--b\" END FUNCTION")
+        || ln("PUBLIC FUNCTION test_last()   END FUNCTION")
+    LET res = Discovery.parseSource(src)
+    CALL Assertions.assertEqualsInt(3, res.tests.getLength(),
+        "# and -- inside a string are not comment markers")
+END FUNCTION
+
+PUBLIC FUNCTION test_escaped_quote_in_string_survives()
+    DEFINE src STRING
+    DEFINE res Discovery.DiscoveryResult
+    # The literal closes on the *unescaped* quote, so the trailing "{"
+    # is still inside the string and must not open a block comment.
+    LET src = ln("PUBLIC FUNCTION test_alpha()")
+        || ln("    LET s = \"say \\\"hi\\\" {\"")
+        || ln("END FUNCTION")
+        || ln("PUBLIC FUNCTION test_beta() END FUNCTION")
+    LET res = Discovery.parseSource(src)
+    CALL Assertions.assertEqualsInt(2, res.tests.getLength(),
+        "backslash-escaped quotes keep the literal open")
 END FUNCTION
 
 PUBLIC FUNCTION test_ignores_non_test_public()

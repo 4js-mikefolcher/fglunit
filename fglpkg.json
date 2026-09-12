@@ -1,6 +1,6 @@
 {
   "name": "fglunit",
-  "version": "0.2.1",
+  "version": "0.2.2",
   "description": "xUnit-style unit testing framework for Genero BDL",
   "author": "mifo@4js.com",
   "license": "MIT",
@@ -8,7 +8,9 @@
   "dependencies": {},
   "root": "com/fourjs/fglunit",
   "docs": [
-    "USERGUIDE.md"
+    "README.md",
+    "USERGUIDE.md",
+    "LICENSE"
   ],
   "programs": [
     "fglunit_gen",

@@ -5,21 +5,28 @@ shell tooling, no codegen.
 
 ## Contents
 
-1. [Install](#install)
-2. [Writing your first test](#writing-your-first-test)
-3. [Assertions](#assertions)
-4. [Fixtures: setUp / tearDown](#fixtures-setup--teardown)
-5. [Suite-level setUp / tearDown](#suite-level-setup--teardown)
-6. [Testing error paths (`assertThrows` and `WHENEVER ANY ERROR RAISE`)](#testing-error-paths)
-7. [Skipping tests](#skipping-tests)
-8. [Running tests](#running-tests)
-9. [Discovery & running a whole test tree](#discovery--running-a-whole-test-tree)
-10. [JUnit XML for CI](#junit-xml-for-ci)
-11. [Failure vs Error](#failure-vs-error)
-12. [When to use fglunit vs GGC](#when-to-use-fglunit-vs-ggc)
-13. [Limitations](#limitations)
+1. [Requirements](#requirements)
+2. [Install](#install)
+3. [Writing your first test](#writing-your-first-test)
+4. [Assertions](#assertions)
+5. [Fixtures: setUp / tearDown](#fixtures-setup--teardown)
+6. [Suite-level setUp / tearDown](#suite-level-setup--teardown)
+7. [Testing error paths (`assertThrows` and `WHENEVER ANY ERROR RAISE`)](#testing-error-paths)
+8. [Skipping tests](#skipping-tests)
+9. [Running tests](#running-tests)
+10. [Discovery & running a whole test tree](#discovery--running-a-whole-test-tree)
+11. [JUnit XML for CI](#junit-xml-for-ci)
+12. [Failure vs Error](#failure-vs-error)
+13. [When to use fglunit vs GGC](#when-to-use-fglunit-vs-ggc)
+14. [Limitations](#limitations)
 
 ---
+
+## Requirements
+
+Genero BDL **4.00 or newer**. `fglunit` uses `util.Regexp` (behind
+`assertMatches`) and `STRING.replaceAll` (JUnit XML escaping), both
+introduced in BDL 4.00.
 
 ## Install
 
@@ -43,9 +50,23 @@ A test program is just a regular `.4gl` module with a `MAIN` that
 registers test functions and calls `FglUnit.run()`. Each test is a
 `PUBLIC FUNCTION` with no parameters and no return value.
 
+> **`MAIN` goes first.** BDL requires the `MAIN` block to precede every
+> `FUNCTION` in the module (module-level `DEFINE`s may come before it).
+> Putting `MAIN` at the bottom fails to compile with
+> `error:(-6609) A grammatical error has been found at 'MAIN'`.
+
 ```4gl
 IMPORT FGL com.fourjs.fglunit.FglUnit
 IMPORT FGL com.fourjs.fglunit.Assertions
+IMPORT FGL com.fourjs.fglunit.CliArgs
+
+MAIN
+    CALL CliArgs.parse()               -- enables --junit, --filter, -v, ...
+    CALL FglUnit.suite("basic math")
+    CALL FglUnit.register("test_addition",        FUNCTION test_addition)
+    CALL FglUnit.register("test_string_contains", FUNCTION test_string_contains)
+    EXIT PROGRAM FglUnit.run()
+END MAIN
 
 PUBLIC FUNCTION test_addition()
     CALL Assertions.assertEqualsInt(4, 2 + 2, "2 + 2 should equal 4")
@@ -54,14 +75,10 @@ END FUNCTION
 PUBLIC FUNCTION test_string_contains()
     CALL Assertions.assertContains("hello world", "world", "substring match")
 END FUNCTION
-
-MAIN
-    CALL FglUnit.suite("basic math")
-    CALL FglUnit.register("test_addition",        FUNCTION test_addition)
-    CALL FglUnit.register("test_string_contains", FUNCTION test_string_contains)
-    EXIT PROGRAM FglUnit.run()
-END MAIN
 ```
+
+`CliArgs.parse()` is optional, but without it the program ignores every
+command-line flag in [Running tests](#running-tests).
 
 Compile and run:
 
@@ -115,6 +132,12 @@ take a `TestHandler` (parameterless function reference).
 ```4gl
 PRIVATE DEFINE counter INTEGER
 
+MAIN
+    CALL FglUnit.setSetup(FUNCTION reset_counter)
+    CALL FglUnit.register("test_increment", FUNCTION test_increment)
+    EXIT PROGRAM FglUnit.run()
+END MAIN
+
 PRIVATE FUNCTION reset_counter()
     LET counter = 0
 END FUNCTION
@@ -123,12 +146,6 @@ PUBLIC FUNCTION test_increment()
     LET counter = counter + 1
     CALL Assertions.assertEqualsInt(1, counter, "first call sets to 1")
 END FUNCTION
-
-MAIN
-    CALL FglUnit.setSetup(FUNCTION reset_counter)
-    CALL FglUnit.register("test_increment", FUNCTION test_increment)
-    EXIT PROGRAM FglUnit.run()
-END MAIN
 ```
 
 If `setUp` raises an error, the test is marked **ERROR** and the body
@@ -162,8 +179,7 @@ function on the call path between the failing operation and
 WHENEVER ANY ERROR RAISE
 ```
 
-This is the standard BDL idiom for surfaceable errors (see the
-"Error Handling" skill in MCP). Example:
+This is the standard BDL idiom for surfaceable errors. Example:
 
 ```4gl
 # code under test
