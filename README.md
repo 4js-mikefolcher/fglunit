@@ -118,6 +118,25 @@ for the conventions and full flag list.
 See [USERGUIDE.md](USERGUIDE.md) for the full API, fixtures (setup / teardown),
 discovery & aggregation, CI recipes, and failure-vs-error semantics.
 
+## Development
+
+```bash
+make build     # compile the package modules
+make test      # self-tests + integration checks + example suites
+make checks    # repository checks (no Genero toolchain needed)
+make ci        # both — what CI runs
+```
+
+`make checks` covers the things that do not need a BDL install: manifest
+and changelog validity, that `LICENSE` is actually in the package, that
+every documented `4gl` example would compile, that no runtime string
+carries a non-ASCII character, and that no build artifact is tracked.
+
+The GitHub workflow runs those on any runner. The build-and-test job is
+skipped unless you set a repository variable `GENERO_RUNNER` to the label
+of a runner that has a licensed Genero install — GitHub-hosted runners do
+not.
+
 ## License
 
 MIT — see [LICENSE](LICENSE).

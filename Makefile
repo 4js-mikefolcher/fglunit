@@ -2,6 +2,8 @@
 #
 #   make           compile the package modules
 #   make test      build + run self-tests + run example tests
+#   make checks    repository checks (no Genero toolchain needed)
+#   make ci        checks + test
 #   make pack      package for fglpkg publish (prints contents)
 #   make publish-dry  fglpkg publish --dry-run
 #   make clean     remove compiled artifacts
@@ -25,6 +27,14 @@ test: build
 	$(MAKE) -C tests
 	$(MAKE) -C examples
 
+# Repository checks that need no BDL toolchain (manifest, changelog,
+# documented examples, runtime-string encoding, tracked artifacts).
+# CI runs these on a plain runner; `make ci` is what CI does end to end.
+checks:
+	python3 ci/checks.py
+
+ci: checks test
+
 pack:
 	fglpkg pack --list
 
@@ -43,4 +53,4 @@ clean:
 	find . -name '*.42?' -delete
 	rm -rf .fglpkg fglpkg.lock
 
-.PHONY: all build test pack publish-dry clean
+.PHONY: all build test checks ci pack publish-dry clean

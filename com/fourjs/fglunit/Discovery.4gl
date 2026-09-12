@@ -64,7 +64,7 @@ PUBLIC FUNCTION parseSource(src STRING) RETURNS DiscoveryResult
         LET problem = signatureProblem(rawLine)
         IF problem IS NOT NULL THEN
             LET res.warnings[res.warnings.getLength() + 1] =
-                SFMT("skipping '%1': it %2 — test cases and fixtures take "
+                SFMT("skipping '%1': it %2; test cases and fixtures take "
                     || "no parameters and return nothing", name, problem)
             CONTINUE WHILE
         END IF

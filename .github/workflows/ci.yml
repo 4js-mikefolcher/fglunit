@@ -1,0 +1,58 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  # Runs anywhere. These checks need no BDL toolchain, so CI stays
+  # meaningful even before a Genero runner is available.
+  checks:
+    name: Repository checks
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Run repository checks
+        run: python3 ci/checks.py
+
+  # Compiles the package and runs the full suite. Genero BDL is licensed
+  # software and is not present on GitHub-hosted runners, so this job runs
+  # only once you point it at a machine that has one:
+  #
+  #   Settings > Secrets and variables > Actions > Variables
+  #     GENERO_RUNNER = the label of a self-hosted runner with FGLDIR set
+  #                     (e.g. "genero"), or a comma-free runner label.
+  #
+  # Alternatively set GENERO_IMAGE to a container image carrying a
+  # licensed install and swap `runs-on` for `container:`.
+  tests:
+    name: Build and test (Genero ${{ vars.GENERO_RUNNER || 'runner not configured' }})
+    if: vars.GENERO_RUNNER != ''
+    runs-on: ${{ vars.GENERO_RUNNER || 'ubuntu-latest' }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Show toolchain
+        run: |
+          echo "FGLDIR=$FGLDIR"
+          fglrun -V | head -3
+
+      - name: Build
+        run: make build
+
+      - name: Self-tests, integration checks and examples
+        run: make test
+
+      - name: Package
+        run: fglpkg pack --list
+
+      # The package ships compiled .42m, and fglpkg builds one variant per
+      # Genero major present on the runner. A release built on a single
+      # major covers only that major — see the note above `publish-dry` in
+      # the Makefile.
+      - name: Publish dry run
+        env:
+          FGLPKG_REGISTRY: ""
+        run: make publish-dry
