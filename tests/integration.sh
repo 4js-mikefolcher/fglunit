@@ -55,6 +55,21 @@ exit_is  "a filter matching nothing exits 1"            1 --filter no_such_test
 says     "and says why"      "matched none of the 6"      --filter no_such_test
 exit_is  "--allow-empty opts back out"                  0 --filter no_such_test --allow-empty
 
+# CliArgs — argument handling is process-level, so it can only be
+# exercised from outside the suite.
+raw_exit_is() {
+    desc=$1; want=$2; shift 2
+    fglrun "$FIX" "$@" >/dev/null 2>&1
+    got=$?
+    if [ "$got" -eq "$want" ]; then pass "$desc"; else fail "$desc" "exit $got, wanted $want"; fi
+}
+raw_exit_is "--help exits 0"                      0 --help
+raw_exit_is "-h exits 0"                          0 -h
+raw_exit_is "an unknown option exits 2"           2 --no-such-flag
+raw_exit_is "an invalid --color value exits 2"    2 --color bogus
+raw_exit_is "--junit without a value exits 2"     2 --junit
+raw_exit_is "--filter without a value exits 2"    2 --filter
+
 # lifecycle
 says "tearDown runs after an erroring test"  "FIXTURES setUp=6 tearDown=5"
 says "an erroring test reports E"            "E gamma_errors"

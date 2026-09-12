@@ -1,7 +1,13 @@
 # fglunit — User Guide
 
-xUnit-style unit testing for Genero BDL. Pure BDL — no GGC server, no
-shell tooling, no codegen.
+xUnit-style unit testing for Genero BDL.
+
+Writing and running a suite needs nothing beyond the BDL runtime: no GGC
+server, no code generation, no shell. The two optional tools in
+[Discovery & running a whole test tree](#discovery--running-a-whole-test-tree)
+do generate code (`fglunit-gen`) and do spawn child processes through a
+shell (`fglunit-run`) — that is the trade they make, and you can ignore
+both.
 
 ## Contents
 
@@ -18,7 +24,8 @@ shell tooling, no codegen.
 11. [JUnit XML for CI](#junit-xml-for-ci)
 12. [Failure vs Error](#failure-vs-error)
 13. [When to use fglunit vs GGC](#when-to-use-fglunit-vs-ggc)
-14. [Limitations](#limitations)
+14. [Testing fglunit itself](#testing-fglunit-itself)
+15. [Limitations](#limitations)
 
 ---
 
@@ -454,6 +461,26 @@ Use **GGC (Genero Ghost Client)** for:
 
 The two coexist happily: a project's `tests/` directory can hold
 fglunit unit suites and GGC scenarios side by side.
+
+## Testing fglunit itself
+
+`FglUnit.takeFailure()` reads **and clears** the current test's failure
+flag, returning whether one was set. It exists for meta-tests — a suite
+that checks an assertion correctly *detects* a failure has to consume
+the flag it just tripped, or the meta-test itself would fail:
+
+```4gl
+PUBLIC FUNCTION test_assertEquals_detects_a_mismatch()
+    CALL Assertions.assertEquals("a", "b", "should trip")
+    CALL Assertions.assertTrue(FglUnit.takeFailure(),
+        "assertEquals('a','b') should have tripped the failure flag")
+END FUNCTION
+```
+
+> It is `PUBLIC` because fglunit's own suites live outside the package,
+> not because ordinary tests should call it. Calling it in a normal test
+> **swallows a real failure** and turns a red test green. If you are not
+> testing an assertion, you do not want this function.
 
 ## Limitations
 

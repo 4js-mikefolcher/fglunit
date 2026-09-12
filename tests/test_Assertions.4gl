@@ -58,6 +58,12 @@ MAIN
         FUNCTION test_assertNotNull_null_trips)
     CALL FglUnit.register("assertContains_missing_trips",
         FUNCTION test_assertContains_missing_trips)
+    CALL FglUnit.register("assertNotContains_present_trips",
+        FUNCTION test_assertNotContains_present_trips)
+    CALL FglUnit.register("assertNotContains_absent_passes",
+        FUNCTION test_assertNotContains_absent_passes)
+    CALL FglUnit.register("assertNotEquals_equal_trips",
+        FUNCTION test_assertNotEquals_equal_trips)
     CALL FglUnit.register("assertMatches_nomatch_trips",
         FUNCTION test_assertMatches_nomatch_trips)
     CALL FglUnit.register("assertThrows_on_silent_fn_trips",
@@ -224,6 +230,24 @@ PUBLIC FUNCTION test_fail_trips()
     CALL Assertions.fail("intentional")
     CALL Assertions.assertTrue(FglUnit.takeFailure(),
         "fail() should trip failure flag")
+END FUNCTION
+
+PUBLIC FUNCTION test_assertNotContains_present_trips()
+    CALL Assertions.assertNotContains("hello world", "world", "should trip")
+    CALL Assertions.assertTrue(FglUnit.takeFailure(),
+        "assertNotContains with the needle present should trip failure flag")
+END FUNCTION
+
+PUBLIC FUNCTION test_assertNotContains_absent_passes()
+    CALL Assertions.assertNotContains("hello", "world", "absent needle")
+    CALL Assertions.assertFalse(FglUnit.takeFailure(),
+        "assertNotContains with the needle absent should not trip")
+END FUNCTION
+
+PUBLIC FUNCTION test_assertNotEquals_equal_trips()
+    CALL Assertions.assertNotEquals("same", "same", "should trip")
+    CALL Assertions.assertTrue(FglUnit.takeFailure(),
+        "assertNotEquals with equal values should trip failure flag")
 END FUNCTION
 
 # NULL arguments ---------------------------------------------------

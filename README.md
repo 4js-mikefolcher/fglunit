@@ -1,8 +1,13 @@
 # fglunit
 
 An xUnit-style unit testing framework for Genero BDL — assertions, fixtures,
-JUnit XML output, CI-friendly exit codes. Pure BDL, no GGC or shell tooling
-required.
+JUnit XML output, CI-friendly exit codes.
+
+The library is pure BDL with no dependencies outside the runtime: write a
+suite, compile it, run the `.42m`. Two **optional** tools go further —
+`fglunit-gen` generates runner modules from your test source, and
+`fglunit-run` executes several compiled suites as child processes and
+merges their reports. Neither is needed to write or run tests.
 
 ## Why
 

@@ -78,6 +78,10 @@ PUBLIC FUNCTION firstLine(s STRING) RETURNS STRING
     RETURN s.subString(1, nl - 1)
 END FUNCTION
 
+# A NULL subject or suffix is FALSE. Note that in BDL an empty string
+# literal IS NULL, so `endsWith(x, "")` takes that branch — there is no
+# "every string ends with the empty string" case to handle, because an
+# empty suffix cannot be expressed distinctly from NULL.
 PUBLIC FUNCTION endsWith(s STRING, suffix STRING) RETURNS BOOLEAN
     DEFINE at INTEGER
     IF s IS NULL OR suffix IS NULL THEN RETURN FALSE END IF
@@ -96,13 +100,20 @@ END FUNCTION
 
 # Insertion sort. Directory listings are small, and BDL's built-in array
 # sort support varies by version — this keeps the floor at BDL 4.00.
+#
+# The bounds test is a separate statement on purpose: BDL does not
+# short-circuit AND, so `WHILE j >= 1 AND names[j] > key` still evaluates
+# names[0] on the last pass and raises -1326. That only shows up when an
+# element has to move to the front, which a directory listing that is
+# already alphabetical never triggers.
 PUBLIC FUNCTION sortNames(names DYNAMIC ARRAY OF STRING)
     DEFINE i, j INTEGER
     DEFINE key STRING
     FOR i = 2 TO names.getLength()
         LET key = names[i]
         LET j = i - 1
-        WHILE j >= 1 AND names[j] > key
+        WHILE j >= 1
+            IF names[j] <= key THEN EXIT WHILE END IF
             LET names[j + 1] = names[j]
             LET j = j - 1
         END WHILE
