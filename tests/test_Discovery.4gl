@@ -24,6 +24,14 @@ MAIN
     CALL FglUnit.register("escaped_quote_in_string_survives",
         FUNCTION test_escaped_quote_in_string_survives)
     CALL FglUnit.register("ignores_non_test_public",   FUNCTION test_ignores_non_test_public)
+    CALL FglUnit.register("rejects_test_with_parameters",
+        FUNCTION test_rejects_test_with_parameters)
+    CALL FglUnit.register("rejects_test_returning_a_value",
+        FUNCTION test_rejects_test_returning_a_value)
+    CALL FglUnit.register("rejects_fixture_with_parameters",
+        FUNCTION test_rejects_fixture_with_parameters)
+    CALL FglUnit.register("accepts_a_bare_declaration",
+        FUNCTION test_accepts_a_bare_declaration)
     CALL FglUnit.register("case_insensitive_keywords", FUNCTION test_case_insensitive_keywords)
     CALL FglUnit.register("duplicate_test_errors",     FUNCTION test_duplicate_test_errors)
     CALL FglUnit.register("duplicate_fixture_errors",  FUNCTION test_duplicate_fixture_errors)
@@ -152,6 +160,64 @@ PUBLIC FUNCTION test_escaped_quote_in_string_survives()
     LET res = Discovery.parseSource(src)
     CALL Assertions.assertEqualsInt(2, res.tests.getLength(),
         "backslash-escaped quotes keep the literal open")
+END FUNCTION
+
+# Signature validation -----------------------------------------------
+#
+# A test case must match TestHandler: FUNCTION() RETURNS (). One that
+# does not used to be registered anyway, and the mismatch surfaced as a
+# type error inside the generated, gitignored, DO-NOT-EDIT runner rather
+# than against the source the author wrote.
+
+PUBLIC FUNCTION test_rejects_test_with_parameters()
+    DEFINE src STRING
+    DEFINE res Discovery.DiscoveryResult
+    LET src = ln("PUBLIC FUNCTION test_good()")
+        || ln("END FUNCTION")
+        || ln("PUBLIC FUNCTION test_helper(a INTEGER, b INTEGER)")
+        || ln("END FUNCTION")
+    LET res = Discovery.parseSource(src)
+    CALL Assertions.assertNull(res.errorMsg, "not a hard error")
+    CALL Assertions.assertEqualsInt(1, res.tests.getLength(),
+        "the parameterized helper is not registered")
+    CALL Assertions.assertEquals("test_good", res.tests[1], "the real test survives")
+    CALL Assertions.assertEqualsInt(1, res.warnings.getLength(), "one warning")
+    CALL Assertions.assertContains(res.warnings[1], "test_helper", "names the symbol")
+    CALL Assertions.assertContains(res.warnings[1], "takes parameters", "says why")
+END FUNCTION
+
+PUBLIC FUNCTION test_rejects_test_returning_a_value()
+    DEFINE src STRING
+    DEFINE res Discovery.DiscoveryResult
+    LET src = ln("PUBLIC FUNCTION test_returns() RETURNS INTEGER")
+        || ln("END FUNCTION")
+    LET res = Discovery.parseSource(src)
+    CALL Assertions.assertEqualsInt(0, res.tests.getLength(), "not registered")
+    CALL Assertions.assertEqualsInt(1, res.warnings.getLength(), "one warning")
+    CALL Assertions.assertContains(res.warnings[1], "returns a value", "says why")
+END FUNCTION
+
+PUBLIC FUNCTION test_rejects_fixture_with_parameters()
+    DEFINE src STRING
+    DEFINE res Discovery.DiscoveryResult
+    LET src = ln("PUBLIC FUNCTION setUp(db STRING)")
+        || ln("END FUNCTION")
+        || ln("PUBLIC FUNCTION test_x() END FUNCTION")
+    LET res = Discovery.parseSource(src)
+    CALL Assertions.assertFalse(res.hasSetup,
+        "a setUp that takes parameters is not wired up")
+    CALL Assertions.assertEqualsInt(1, res.warnings.getLength(), "one warning")
+END FUNCTION
+
+PUBLIC FUNCTION test_accepts_a_bare_declaration()
+    DEFINE src STRING
+    DEFINE res Discovery.DiscoveryResult
+    # No parameter list on the declaration line at all — nothing to object to.
+    LET src = ln("PUBLIC FUNCTION test_bare")
+        || ln("END FUNCTION")
+    LET res = Discovery.parseSource(src)
+    CALL Assertions.assertEqualsInt(1, res.tests.getLength(), "still registered")
+    CALL Assertions.assertEqualsInt(0, res.warnings.getLength(), "no warning")
 END FUNCTION
 
 PUBLIC FUNCTION test_ignores_non_test_public()

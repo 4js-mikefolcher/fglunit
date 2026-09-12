@@ -20,6 +20,7 @@ PACKAGE com.fourjs.fglunit
 #     -h, --help
 
 IMPORT os
+IMPORT util
 IMPORT FGL com.fourjs.fglunit.Aggregator
 
 PRIVATE CONSTANT ANSI_RESET = "\x1b[0m"
@@ -41,6 +42,7 @@ MAIN
 
     LET optColor = "auto"
     LET origLdPath = fgl_getenv("FGLLDPATH")
+    CALL util.Math.srand()
     CALL parseArgs()
 
     IF progs.getLength() == 0 THEN
@@ -329,8 +331,9 @@ END FUNCTION
 
 # Append every *.run.42m in `dir` (non-recursive) to the program list.
 PRIVATE FUNCTION scanDir(dir STRING)
-    DEFINE h INTEGER
+    DEFINE h, i INTEGER
     DEFINE name, low STRING
+    DEFINE found DYNAMIC ARRAY OF STRING
     LET h = os.Path.dirOpen(dir)
     IF h == 0 THEN
         DISPLAY SFMT("fglunit-run: cannot open directory '%1'", dir)
@@ -341,10 +344,31 @@ PRIVATE FUNCTION scanDir(dir STRING)
         IF name IS NULL OR name == "" THEN EXIT WHILE END IF
         LET low = name.toLowerCase()
         IF endsWith(low, ".run.42m") THEN
-            LET progs[progs.getLength() + 1] = os.Path.join(dir, name)
+            LET found[found.getLength() + 1] = name
         END IF
     END WHILE
     CALL os.Path.dirClose(h)
+
+    # dirNext() yields filesystem order, which varies by machine. Sort so
+    # the suite order in the aggregated report is reproducible.
+    CALL sortNames(found)
+    FOR i = 1 TO found.getLength()
+        LET progs[progs.getLength() + 1] = os.Path.join(dir, found[i])
+    END FOR
+END FUNCTION
+
+PRIVATE FUNCTION sortNames(names DYNAMIC ARRAY OF STRING)
+    DEFINE i, j INTEGER
+    DEFINE key STRING
+    FOR i = 2 TO names.getLength()
+        LET key = names[i]
+        LET j = i - 1
+        WHILE j >= 1 AND names[j] > key
+            LET names[j + 1] = names[j]
+            LET j = j - 1
+        END WHILE
+        LET names[j + 1] = key
+    END FOR
 END FUNCTION
 
 # Helpers -----------------------------------------------------------
@@ -352,13 +376,34 @@ END FUNCTION
 # A writable temp directory, probed OS-agnostically: TMPDIR (Unix) then
 # TEMP / TMP (Windows), falling back to the current directory. os.Path.join
 # applies the platform directory separator.
+#
+# The name carries a random component and the path is rejected if it
+# already exists. "fglunit.<pid>.<n>.xml" was guessable, and on a shared
+# CI runner /tmp is world-writable: anyone able to predict the name could
+# pre-create a symlink and have the driver write through it. BDL exposes
+# no O_EXCL, so this narrows the window rather than closing it — which is
+# why the name is unguessable in the first place.
 PRIVATE FUNCTION tempPath(idx INTEGER, ext STRING) RETURNS STRING
-    DEFINE dir STRING
+    DEFINE dir, path STRING
+    DEFINE attempt INTEGER
+
     LET dir = fgl_getenv("TMPDIR")
     IF dir IS NULL OR dir.getLength() == 0 THEN LET dir = fgl_getenv("TEMP") END IF
     IF dir IS NULL OR dir.getLength() == 0 THEN LET dir = fgl_getenv("TMP") END IF
     IF dir IS NULL OR dir.getLength() == 0 THEN LET dir = os.Path.pwd() END IF
-    RETURN os.Path.join(dir, SFMT("fglunit.%1.%2.%3", fgl_getpid(), idx, ext))
+
+    FOR attempt = 1 TO 20
+        LET path = os.Path.join(dir,
+            SFMT("fglunit.%1.%2.%3.%4", fgl_getpid(), idx,
+                 util.Math.rand(1000000000), ext))
+        IF NOT os.Path.exists(path) THEN
+            RETURN path
+        END IF
+    END FOR
+
+    DISPLAY SFMT("fglunit-run: cannot find an unused temporary file name in '%1'", dir)
+    EXIT PROGRAM 2
+    RETURN NULL   # unreachable; the compiler cannot see EXIT PROGRAM ends the function
 END FUNCTION
 
 PRIVATE FUNCTION tailOf(s STRING) RETURNS STRING
@@ -412,10 +457,17 @@ PRIVATE FUNCTION deleteFile(path STRING)
     END TRY
 END FUNCTION
 
+# Strip the compiled-module extension only. Cutting at the first dot
+# turned "my.suite.run.42m" into "my" in crash reports.
 PRIVATE FUNCTION stem(fileName STRING) RETURNS STRING
-    DEFINE dot INTEGER
-    LET dot = fileName.getIndexOf(".", 1)
-    IF dot > 1 THEN RETURN fileName.subString(1, dot - 1) END IF
+    DEFINE low STRING
+    LET low = fileName.toLowerCase()
+    IF endsWith(low, ".run.42m") THEN
+        RETURN fileName.subString(1, fileName.getLength() - 8)
+    END IF
+    IF endsWith(low, ".42m") THEN
+        RETURN fileName.subString(1, fileName.getLength() - 4)
+    END IF
     RETURN fileName
 END FUNCTION
 

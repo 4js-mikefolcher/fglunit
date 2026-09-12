@@ -24,7 +24,8 @@ PUBLIC TYPE DiscoveryResult RECORD
     hasTeardown BOOLEAN,
     hasSetupSuite BOOLEAN,
     hasTeardownSuite BOOLEAN,
-    errorMsg STRING                  # non-NULL => discovery failed
+    errorMsg STRING,                 # non-NULL => discovery failed
+    warnings DYNAMIC ARRAY OF STRING # non-fatal: symbols that were skipped
 END RECORD
 
 # Public API --------------------------------------------------------
@@ -36,7 +37,7 @@ PUBLIC FUNCTION parseSource(src STRING) RETURNS DiscoveryResult
     DEFINE res DiscoveryResult
     DEFINE clean STRING
     DEFINE tok base.StringTokenizer
-    DEFINE rawLine, name, kind STRING
+    DEFINE rawLine, name, kind, problem STRING
     DEFINE i INTEGER
 
     IF src IS NULL THEN
@@ -53,6 +54,21 @@ PUBLIC FUNCTION parseSource(src STRING) RETURNS DiscoveryResult
         IF name IS NULL THEN CONTINUE WHILE END IF
 
         LET kind = classify(name)
+        IF kind == "" THEN CONTINUE WHILE END IF
+
+        # A test case or fixture must match TestHandler — FUNCTION()
+        # RETURNS (). One that takes parameters used to be registered
+        # anyway, and the mismatch surfaced as a type error inside the
+        # generated, gitignored, DO-NOT-EDIT runner rather than against
+        # the source the author actually wrote.
+        LET problem = signatureProblem(rawLine)
+        IF problem IS NOT NULL THEN
+            LET res.warnings[res.warnings.getLength() + 1] =
+                SFMT("skipping '%1': it %2 — test cases and fixtures take "
+                    || "no parameters and return nothing", name, problem)
+            CONTINUE WHILE
+        END IF
+
         CASE kind
             WHEN "test"
                 # reject a duplicate test name
@@ -187,6 +203,40 @@ PRIVATE FUNCTION functionNameOf(rawLine STRING) RETURNS STRING
     END IF
     IF t3.getLength() == 0 THEN RETURN NULL END IF
     RETURN t3
+END FUNCTION
+
+# Describe why a declaration cannot be used as a TestHandler, or NULL if
+# it can. Only the declaration line is inspected: a signature spilling
+# onto a second line necessarily has parameters.
+PRIVATE FUNCTION signatureProblem(rawLine STRING) RETURNS STRING
+    DEFINE open, close INTEGER
+    DEFINE params, tail STRING
+
+    LET open = rawLine.getIndexOf("(", 1)
+    IF open == 0 THEN
+        # No parameter list on this line at all — nothing to object to.
+        RETURN NULL
+    END IF
+
+    LET close = rawLine.getIndexOf(")", open)
+    IF close == 0 THEN
+        RETURN "takes parameters"
+    END IF
+
+    IF close > open + 1 THEN
+        LET params = rawLine.subString(open + 1, close - 1)
+        IF params.trim().getLength() > 0 THEN
+            RETURN "takes parameters"
+        END IF
+    END IF
+
+    LET tail = rawLine.subString(close + 1, rawLine.getLength())
+    LET tail = tail.trim().toUpperCase()
+    IF tail.getIndexOf("RETURNS", 1) == 1 THEN
+        RETURN "returns a value"
+    END IF
+
+    RETURN NULL
 END FUNCTION
 
 # Classify a function name into "test", a fixture name, or "" (ignored).

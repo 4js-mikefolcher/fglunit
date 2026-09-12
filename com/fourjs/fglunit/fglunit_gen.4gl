@@ -53,6 +53,7 @@ END MAIN
 PRIVATE FUNCTION processFile(path STRING) RETURNS BOOLEAN
     DEFINE src, moduleName, suite, runnerText, outPath STRING
     DEFINE res Discovery.DiscoveryResult
+    DEFINE i INTEGER
 
     LET src = readFile(path)
     IF src IS NULL THEN
@@ -62,6 +63,10 @@ PRIVATE FUNCTION processFile(path STRING) RETURNS BOOLEAN
 
     LET moduleName = stem(os.Path.baseName(path))
     LET res = Discovery.parseSource(src)
+
+    FOR i = 1 TO res.warnings.getLength()
+        DISPLAY SFMT("fglunit-gen: %1: warning: %2", path, res.warnings[i])
+    END FOR
 
     IF res.errorMsg IS NOT NULL THEN
         DISPLAY SFMT("fglunit-gen: %1: %2", path, res.errorMsg)
@@ -148,8 +153,9 @@ END FUNCTION
 
 # Append every test_*.4gl in `dir` (non-recursive) to the input list.
 PRIVATE FUNCTION scanDir(dir STRING)
-    DEFINE h INTEGER
+    DEFINE h, i INTEGER
     DEFINE name, low STRING
+    DEFINE found DYNAMIC ARRAY OF STRING
 
     LET h = os.Path.dirOpen(dir)
     IF h == 0 THEN
@@ -163,10 +169,34 @@ PRIVATE FUNCTION scanDir(dir STRING)
         IF low.getIndexOf("test", 1) == 1
            AND low.getIndexOf(".run.4gl", 1) == 0
            AND endsWith(low, ".4gl") THEN
-            LET inputs[inputs.getLength() + 1] = os.Path.join(dir, name)
+            LET found[found.getLength() + 1] = name
         END IF
     END WHILE
     CALL os.Path.dirClose(h)
+
+    # dirNext() yields entries in filesystem order, which differs between
+    # machines. Sort so a directory sweep produces the same suite order —
+    # and so the same aggregated report — everywhere.
+    CALL sortNames(found)
+    FOR i = 1 TO found.getLength()
+        LET inputs[inputs.getLength() + 1] = os.Path.join(dir, found[i])
+    END FOR
+END FUNCTION
+
+# Insertion sort: directory listings are small and BDL's array sort
+# support varies by version, so this keeps the floor at BDL 4.00.
+PRIVATE FUNCTION sortNames(names DYNAMIC ARRAY OF STRING)
+    DEFINE i, j INTEGER
+    DEFINE key STRING
+    FOR i = 2 TO names.getLength()
+        LET key = names[i]
+        LET j = i - 1
+        WHILE j >= 1 AND names[j] > key
+            LET names[j + 1] = names[j]
+            LET j = j - 1
+        END WHILE
+        LET names[j + 1] = key
+    END FOR
 END FUNCTION
 
 # File I/O ----------------------------------------------------------

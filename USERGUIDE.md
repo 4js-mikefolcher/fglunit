@@ -334,10 +334,18 @@ fglrun test_Calculator.run.42m
 | `-h`, `--help` | Usage |
 
 Fixtures and tests **must be `PUBLIC`** so the generated runner can take
-function pointers to them. A duplicate test name or duplicate fixture is a
-hard error (non-zero exit). A module with no `test*` functions is skipped
-with a warning. The generated file carries a `DO NOT EDIT` header; it is
-`.gitignore`d by default (`*.run.4gl`).
+function pointers to them, and each must be a `TestHandler` — no
+parameters, no return value. A `test*` function that takes parameters (a
+helper, usually) or returns a value is **skipped with a warning** naming
+it, rather than registered into a runner that then fails to compile.
+
+A duplicate test name or duplicate fixture is a hard error (non-zero
+exit). A module with no `test*` functions is skipped with a warning. The
+generated file carries a `DO NOT EDIT` header; it is `.gitignore`d by
+default (`*.run.4gl`).
+
+`--dir` sorts the files it finds, so a directory sweep produces the same
+suite order — and the same aggregated report — on every machine.
 
 ### `fglunit-run` — aggregate many suites
 

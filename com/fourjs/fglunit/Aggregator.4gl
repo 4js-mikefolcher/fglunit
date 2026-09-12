@@ -152,14 +152,32 @@ END FUNCTION
 
 # Helpers -----------------------------------------------------------
 
+# A child could write a non-numeric attribute (or none). Coercing it
+# straight to a number yields NULL, and NULL then poisons every running
+# total it is added to — the aggregated report would show blank counts
+# rather than one bad suite.
 PRIVATE FUNCTION toInt(v STRING) RETURNS INTEGER
+    DEFINE n INTEGER
     IF v IS NULL OR v.getLength() == 0 THEN RETURN 0 END IF
-    RETURN v
+    TRY
+        LET n = v
+    CATCH
+        RETURN 0
+    END TRY
+    IF n IS NULL THEN RETURN 0 END IF
+    RETURN n
 END FUNCTION
 
 PRIVATE FUNCTION toDec(v STRING) RETURNS DECIMAL(18,3)
+    DEFINE d DECIMAL(18,3)
     IF v IS NULL OR v.getLength() == 0 THEN RETURN 0 END IF
-    RETURN v
+    TRY
+        LET d = v
+    CATCH
+        RETURN 0
+    END TRY
+    IF d IS NULL THEN RETURN 0 END IF
+    RETURN d
 END FUNCTION
 
 PRIVATE FUNCTION fmtSec(secs DECIMAL(18,3)) RETURNS STRING
