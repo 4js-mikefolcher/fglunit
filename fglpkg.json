@@ -1,6 +1,6 @@
 {
   "name": "fglunit",
-  "version": "0.2.2",
+  "version": "1.0.0",
   "description": "xUnit-style unit testing framework for Genero BDL",
   "author": "mifo@4js.com",
   "license": "MIT",
