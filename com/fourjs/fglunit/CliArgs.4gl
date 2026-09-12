@@ -20,6 +20,7 @@ IMPORT FGL com.fourjs.fglunit.FglUnit
 #   --list              print registered tests and exit 0 (handled by run)
 #   -v, --verbose       per-test output
 #   --fail-fast         stop on first failure
+#   --allow-empty       exit 0 even when no test ran
 #   --color <mode>      auto | always | never
 #   -h, --help          print usage and exit 0
 
@@ -41,6 +42,8 @@ PUBLIC FUNCTION parse()
                 CALL FglUnit.setListOnly(TRUE)
             WHEN arg = "--fail-fast"
                 CALL FglUnit.setFailFast(TRUE)
+            WHEN arg = "--allow-empty"
+                CALL FglUnit.setAllowEmpty(TRUE)
             WHEN arg = "--junit"
                 LET next = consumeValue(arg, i, n)
                 LET i = i + 1
@@ -86,8 +89,10 @@ PRIVATE FUNCTION printUsage()
     DISPLAY "  --list               Print registered tests and exit"
     DISPLAY "  -v, --verbose        Per-test output"
     DISPLAY "  --fail-fast          Stop on first failure"
+    DISPLAY "  --allow-empty        Exit 0 even when no test ran"
     DISPLAY "  --color <mode>       auto (default) | always | never"
     DISPLAY "  -h, --help           Show this help"
     DISPLAY ""
-    DISPLAY "Exit code: 0 when all tests pass, 1 otherwise."
+    DISPLAY "Exit code: 0 when all tests pass, 1 on failure or when no"
+    DISPLAY "test ran (see --allow-empty), 2 on a usage error."
 END FUNCTION

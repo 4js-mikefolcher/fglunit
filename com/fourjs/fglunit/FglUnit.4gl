@@ -40,6 +40,9 @@ PRIVATE DEFINE failureSeen BOOLEAN
 PRIVATE DEFINE skipSeen BOOLEAN
 PRIVATE DEFINE failureMsg STRING
 PRIVATE DEFINE failureLoc STRING
+# Kept apart from failureMsg: a test that skips AND fails must not lose
+# the failure text behind the skip reason.
+PRIVATE DEFINE skipMsg STRING
 
 # Runtime options (set via CliArgs.parse + setters)
 PRIVATE DEFINE optVerbose BOOLEAN
@@ -48,6 +51,7 @@ PRIVATE DEFINE optListOnly BOOLEAN
 PRIVATE DEFINE optFailFast BOOLEAN
 PRIVATE DEFINE optJunit STRING
 PRIVATE DEFINE optColor STRING     # "auto" | "always" | "never"
+PRIVATE DEFINE optAllowEmpty BOOLEAN
 
 # Public API: suite config + registration ---------------------------
 
@@ -104,6 +108,13 @@ PUBLIC FUNCTION setColorMode(mode STRING)
     LET optColor = mode
 END FUNCTION
 
+# Permit a run in which no test executed to still exit 0. Off by default:
+# a filter typo, an empty registry or a bad --dir otherwise produces a
+# green build that ran nothing at all.
+PUBLIC FUNCTION setAllowEmpty(v BOOLEAN)
+    LET optAllowEmpty = v
+END FUNCTION
+
 PUBLIC FUNCTION getColorMode() RETURNS STRING
     IF optColor IS NULL OR optColor.getLength() == 0 THEN RETURN "auto" END IF
     RETURN optColor
@@ -129,7 +140,7 @@ END FUNCTION
 
 PUBLIC FUNCTION notifySkip(message STRING)
     LET skipSeen = TRUE
-    LET failureMsg = message
+    LET skipMsg = message
 END FUNCTION
 
 # Testing helper: reads and clears the per-test failure flag in one
@@ -155,11 +166,16 @@ PUBLIC FUNCTION run() RETURNS INTEGER
     DEFINE passed, failed, errored, skipped INTEGER
     DEFINE startDt DATETIME YEAR TO FRACTION(3)
     DEFINE totalMs INTEGER
+    DEFINE selected INTEGER
+    DEFINE fixtureErr STRING
 
-    # --list mode: print names and exit 0
+    # --list mode: print names and exit 0. The filter applies here too,
+    # so `--list --filter x` previews exactly what `--filter x` runs.
     IF optListOnly THEN
         FOR i = 1 TO registry.getLength()
-            DISPLAY registry[i].name
+            IF matchesFilter(registry[i].name) THEN
+                DISPLAY registry[i].name
+            END IF
         END FOR
         RETURN 0
     END IF
@@ -168,36 +184,48 @@ PUBLIC FUNCTION run() RETURNS INTEGER
 
     LET startDt = CURRENT YEAR TO FRACTION(3)
 
+    # A suite fixture that raises used to kill the program outright, with
+    # no report and no exit code of our own. Record it as an error so the
+    # failure is visible in the console and in the JUnit document.
     IF setUpSuiteFn IS NOT NULL THEN
-        CALL setUpSuiteFn()
+        LET fixtureErr = callFixture(setUpSuiteFn)
+        IF fixtureErr IS NOT NULL THEN
+            CALL recordFixtureError("(setUpSuite)", fixtureErr, startDt)
+            LET errored = errored + 1
+        END IF
     END IF
 
-    FOR i = 1 TO registry.getLength()
-        IF optFilter IS NOT NULL AND optFilter.getLength() > 0 THEN
-            IF registry[i].name.getIndexOf(optFilter, 1) == 0 THEN
+    IF errored == 0 THEN
+        FOR i = 1 TO registry.getLength()
+            IF NOT matchesFilter(registry[i].name) THEN
                 CONTINUE FOR
             END IF
-        END IF
+            LET selected = selected + 1
 
-        CALL runOne(registry[i].name, registry[i].fn) RETURNING r.*
-        LET results[results.getLength() + 1].* = r.*
+            CALL runOne(registry[i].name, registry[i].fn) RETURNING r.*
+            LET results[results.getLength() + 1].* = r.*
 
-        CALL Reporter.onProgress(r.*)
+            CALL Reporter.onProgress(r.*)
 
-        CASE r.status
-            WHEN STATUS_PASS  LET passed  = passed  + 1
-            WHEN STATUS_FAIL  LET failed  = failed  + 1
-            WHEN STATUS_ERROR LET errored = errored + 1
-            WHEN STATUS_SKIP  LET skipped = skipped + 1
-        END CASE
+            CASE r.status
+                WHEN STATUS_PASS  LET passed  = passed  + 1
+                WHEN STATUS_FAIL  LET failed  = failed  + 1
+                WHEN STATUS_ERROR LET errored = errored + 1
+                WHEN STATUS_SKIP  LET skipped = skipped + 1
+            END CASE
 
-        IF optFailFast AND (r.status == STATUS_FAIL OR r.status == STATUS_ERROR) THEN
-            EXIT FOR
-        END IF
-    END FOR
+            IF optFailFast AND (r.status == STATUS_FAIL OR r.status == STATUS_ERROR) THEN
+                EXIT FOR
+            END IF
+        END FOR
+    END IF
 
     IF tearDownSuiteFn IS NOT NULL THEN
-        CALL tearDownSuiteFn()
+        LET fixtureErr = callFixture(tearDownSuiteFn)
+        IF fixtureErr IS NOT NULL THEN
+            CALL recordFixtureError("(tearDownSuite)", fixtureErr, startDt)
+            LET errored = errored + 1
+        END IF
     END IF
 
     LET totalMs = elapsedMs(startDt)
@@ -211,12 +239,59 @@ PUBLIC FUNCTION run() RETURNS INTEGER
     IF failed > 0 OR errored > 0 THEN
         RETURN 1
     END IF
+
+    # Nothing ran. Almost always a mistake — a mistyped --filter, a suite
+    # whose registrations were never wired up — and reporting success for
+    # it hands CI a green build that tested nothing.
+    IF selected == 0 AND NOT optAllowEmpty THEN
+        IF registry.getLength() == 0 THEN
+            DISPLAY "fglunit: no tests registered "
+                || "(use --allow-empty if that is intended)"
+        ELSE
+            DISPLAY SFMT("fglunit: --filter '%1' matched none of the %2 "
+                || "registered tests (use --allow-empty if that is intended)",
+                optFilter, registry.getLength())
+        END IF
+        RETURN 1
+    END IF
+
     RETURN 0
+END FUNCTION
+
+PRIVATE FUNCTION matchesFilter(name STRING) RETURNS BOOLEAN
+    IF optFilter IS NULL OR optFilter.getLength() == 0 THEN
+        RETURN TRUE
+    END IF
+    RETURN name.getIndexOf(optFilter, 1) > 0
+END FUNCTION
+
+# Run a fixture, converting a raised error into a message. Returns NULL
+# when the fixture completed normally.
+PRIVATE FUNCTION callFixture(fn TestHandler) RETURNS STRING
+    TRY
+        CALL fn()
+    CATCH
+        RETURN SFMT("%1: %2", status, err_get(status))
+    END TRY
+    RETURN NULL
+END FUNCTION
+
+PRIVATE FUNCTION recordFixtureError(name STRING, message STRING,
+                                    startDt DATETIME YEAR TO FRACTION(3))
+    DEFINE r TestResult
+    INITIALIZE r.* TO NULL
+    LET r.name = name
+    LET r.status = STATUS_ERROR
+    LET r.message = message
+    LET r.durationMs = elapsedMs(startDt)
+    LET results[results.getLength() + 1].* = r.*
+    CALL Reporter.onProgress(r.*)
 END FUNCTION
 
 PRIVATE FUNCTION runOne(name STRING, fn TestHandler) RETURNS TestResult
     DEFINE r TestResult
     DEFINE startDt DATETIME YEAR TO FRACTION(3)
+    DEFINE errMsg, tdErr STRING
 
     LET r.name = name
 
@@ -225,6 +300,7 @@ PRIVATE FUNCTION runOne(name STRING, fn TestHandler) RETURNS TestResult
     LET skipSeen = FALSE
     LET failureMsg = NULL
     LET failureLoc = NULL
+    LET skipMsg = NULL
 
     LET startDt = CURRENT YEAR TO FRACTION(3)
 
@@ -233,30 +309,45 @@ PRIVATE FUNCTION runOne(name STRING, fn TestHandler) RETURNS TestResult
             CALL setUpFn()
         END IF
         CALL fn()
-        IF tearDownFn IS NOT NULL THEN
-            CALL tearDownFn()
-        END IF
     CATCH
         # Unexpected runtime error escaped the test.
         # Stack is already unwound — err_get(status) carries the line.
-        LET r.status = STATUS_ERROR
-        LET r.message = SFMT("%1: %2", status, err_get(status))
-        LET r.durationMs = elapsedMs(startDt)
-        RETURN r
+        LET errMsg = SFMT("%1: %2", status, err_get(status))
     END TRY
+
+    # tearDown runs whatever the body did. It is exactly when the body
+    # blew up that the cleanup matters — leaving a connection open or a
+    # temp table behind leaks into every later test. (JUnit's @After runs
+    # unconditionally too.) A tearDown that raises is itself an error,
+    # but never masks the original one.
+    IF tearDownFn IS NOT NULL THEN
+        LET tdErr = callFixture(tearDownFn)
+        IF tdErr IS NOT NULL AND errMsg IS NULL THEN
+            LET errMsg = SFMT("tearDown raised %1", tdErr)
+        END IF
+    END IF
 
     LET r.durationMs = elapsedMs(startDt)
 
-    IF skipSeen THEN
-        LET r.status = STATUS_SKIP
-        LET r.message = NVL(failureMsg, "skipped")
+    IF errMsg IS NOT NULL THEN
+        LET r.status = STATUS_ERROR
+        LET r.message = errMsg
         RETURN r
     END IF
 
+    # A failure outranks a skip. skip() cannot abort the test — BDL gives
+    # us no way to unwind — so code after it still runs; if an assertion
+    # in that code failed, reporting SKIP would bury a real result.
     IF failureSeen THEN
         LET r.status = STATUS_FAIL
         LET r.message = failureMsg
         LET r.location = failureLoc
+        RETURN r
+    END IF
+
+    IF skipSeen THEN
+        LET r.status = STATUS_SKIP
+        LET r.message = NVL(skipMsg, "skipped")
         RETURN r
     END IF
 

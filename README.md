@@ -76,9 +76,12 @@ Tests: 2  Passed: 2  Failed: 0  Errors: 0  Skipped: 0  Time: 1 ms
 | `--list` | Print registered test names and exit 0 |
 | `-v` / `--verbose` | Per-test output |
 | `--fail-fast` | Stop on first failure |
+| `--allow-empty` | Exit `0` even when no test ran |
 | `--color never\|always\|auto` | Force / disable ANSI color |
 
-Exit code is `0` when all pass, `1` otherwise.
+Exit code is `0` when every test passed, `1` on a failure **or when no
+test ran at all** (a mistyped `--filter` should not produce a green
+build), `2` on a usage error.
 
 ## Discovery & running a whole test tree
 

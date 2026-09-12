@@ -107,6 +107,14 @@ they fail. When an assertion fails, the test continues running — the
 **first** failure is reported (JUnit semantics). Use `assertThrows` to
 stop early or just structure your tests with one logical check each.
 
+> **NULL is never quietly equal.** BDL evaluates both `NULL = x` and
+> `NULL != x` as false, so an assertion written the obvious way *passes*
+> when handed a NULL. Every fglunit assertion tests NULL explicitly:
+> NULL equals NULL, NULL differs from every other value, and a NULL
+> shows as `<NULL>` in the failure message. `assertTrue(NULL)` and
+> `assertFalse(NULL)` both fail — NULL is neither. A NULL `tolerance`
+> in `assertEqualsDec` means exact match, not match-anything.
+
 | Assertion | Notes |
 |---|---|
 | `assertTrue(cond, msg)` | `cond` is `BOOLEAN` |
@@ -149,9 +157,14 @@ END FUNCTION
 ```
 
 If `setUp` raises an error, the test is marked **ERROR** and the body
-does not run. If the test body raises, `tearDown` does **not** run for
-that test (matches JUnit; isolate teardown by wrapping in TRY/CATCH if
-you need it to run unconditionally).
+does not run. `tearDown` runs regardless — after a pass, a failure, a
+skip, an error, and after a `setUp` that raised. That matches JUnit's
+`@After`, and it is when the body blew up that the cleanup matters most:
+a connection left open or a temp table left behind leaks into every
+later test.
+
+If `tearDown` itself raises, the test is marked **ERROR**, but a failure
+or error already recorded for the body is never overwritten by it.
 
 ## Suite-level setUp / tearDown
 
@@ -228,6 +241,12 @@ END FUNCTION
 
 Skipped tests show as `-` and don't count toward fail/error totals.
 
+> **`skip()` does not abort the test.** BDL gives the framework no way to
+> unwind the call stack, so execution continues on the next line — always
+> follow `skip()` with `RETURN`, as above. If an assertion *does* run
+> afterwards and fails, the test reports **FAIL**, not SKIP: a real
+> failure is never hidden behind a skip.
+
 ## Running tests
 
 ```
@@ -241,10 +260,18 @@ fglrun my_tests.42m [options]
 | `--list` | Print registered test names and exit 0 |
 | `-v`, `--verbose` | Show duration and failure details for every test |
 | `--fail-fast` | Stop on first FAIL or ERROR |
+| `--allow-empty` | Exit `0` even when no test ran |
 | `--color <mode>` | `auto` (default), `always`, `never` |
 | `-h`, `--help` | Print usage |
 
-Exit code: `0` when all pass, `1` if any FAIL or ERROR.
+Exit codes: `0` when every test passed, `1` on a FAIL or ERROR **or when
+no test ran at all**, `2` on a usage error.
+
+> **A run that executed nothing fails.** A mistyped `--filter`, or a
+> suite whose `register()` calls were never wired up, would otherwise
+> hand CI a green build over an empty run. fglunit prints what happened
+> and exits `1`. Pass `--allow-empty` where an empty run is legitimate —
+> a suite whose tests are all filtered out by design, say.
 
 Color is auto-detected via `$TERM` — set `TERM=dumb` (or `--color never`)
 to disable in CI logs.
@@ -335,13 +362,14 @@ Suites: 2  Tests: 13  Passed: 13  Failed: 0  Errors: 0  Skipped: 0
 | `--junit <file>` | Write the aggregated `<testsuites>` XML |
 | `--filter <pat>` | Passed through to each child suite |
 | `--fail-fast` | Stop after the first failing suite |
+| `--allow-empty` | Exit `0` even when no suite ran a single test |
 | `-v`, `--verbose` | Echo each child's console output |
 | `--color <mode>` | `auto` (default) \| `always` \| `never` |
 
 Each child runs in its own process, so a suite that **crashes** (abnormal
 exit, no usable JUnit) is reported as an errored suite — with the captured
-output and a retained log path — instead of being silently dropped. Exit
-code is `0` only when every suite passes.
+output — instead of being silently dropped. Exit code is `0` only when
+every suite passes and at least one test actually ran.
 
 The `examples/` directory shows the full chain (generate → compile →
 aggregate) driven from a `Makefile`.

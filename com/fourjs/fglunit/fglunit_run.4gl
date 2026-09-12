@@ -14,6 +14,7 @@ PACKAGE com.fourjs.fglunit
 #     --junit <file>  write the aggregated <testsuites> XML
 #     --filter <pat>  passed through to each child suite
 #     --fail-fast     stop after the first failing suite
+#     --allow-empty   exit 0 even when no suite ran a single test
 #     -v, --verbose   passed through; also echoes each child's console
 #     --color <mode>  auto (default) | always | never
 #     -h, --help
@@ -28,7 +29,7 @@ PRIVATE CONSTANT ANSI_RED   = "\x1b[31m"
 PRIVATE DEFINE progs DYNAMIC ARRAY OF STRING
 PRIVATE DEFINE optJunit, optFilter STRING
 PRIVATE DEFINE optColor STRING
-PRIVATE DEFINE optVerbose, optFailFast BOOLEAN
+PRIVATE DEFINE optVerbose, optFailFast, optAllowEmpty BOOLEAN
 PRIVATE DEFINE origLdPath STRING   # FGLLDPATH as inherited, restored per child
 
 MAIN
@@ -72,6 +73,17 @@ MAIN
     IF t.failures > 0 OR t.errors > 0 THEN
         EXIT PROGRAM 1
     END IF
+
+    # Every suite ran but not one test executed: a mistyped --filter, or
+    # a --dir that matched programs containing nothing. Reporting success
+    # would hand CI a green build over an empty run.
+    IF t.tests == 0 AND NOT optAllowEmpty THEN
+        DISPLAY "fglunit-run: no tests ran across "
+            || t.suites || " suite(s) "
+            || "(use --allow-empty if that is intended)"
+        EXIT PROGRAM 1
+    END IF
+
     EXIT PROGRAM 0
 END MAIN
 
@@ -274,6 +286,8 @@ PRIVATE FUNCTION parseArgs()
                 LET optVerbose = TRUE
             WHEN arg == "--fail-fast"
                 LET optFailFast = TRUE
+            WHEN arg == "--allow-empty"
+                LET optAllowEmpty = TRUE
             WHEN arg == "--junit"
                 LET optJunit = needValue(arg, i, n)
                 LET i = i + 1
@@ -445,9 +459,11 @@ PRIVATE FUNCTION usage()
     DISPLAY "  --junit <file>  Write the aggregated <testsuites> XML"
     DISPLAY "  --filter <pat>  Passed through to each child suite"
     DISPLAY "  --fail-fast     Stop after the first failing suite"
+    DISPLAY "  --allow-empty   Exit 0 even when no suite ran a test"
     DISPLAY "  -v, --verbose   Echo each child's console output"
     DISPLAY "  --color <mode>  auto (default) | always | never"
     DISPLAY "  -h, --help      Show this help"
     DISPLAY ""
-    DISPLAY "Exit code: 0 when all suites pass, 1 otherwise."
+    DISPLAY "Exit code: 0 when all suites pass, 1 on failure or when no"
+    DISPLAY "test ran (see --allow-empty), 2 on a usage error."
 END FUNCTION
