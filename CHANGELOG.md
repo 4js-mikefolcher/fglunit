@@ -7,6 +7,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 `fglpkg publish` reads the section matching the version in `fglpkg.json`,
 so every release needs an entry here before it is published.
 
+## [Unreleased]
+
+### Added
+
+- **Parametrized tests:** `FglUnit.registerCases(name, fn, cases)` runs `fn`
+  once per row, each row its own test (`name[1]`, `name[2]`, ...). A
+  failing row prints the row; an empty table fails rather than vanishing.
+- **Fuzz targets:** `FglUnit.registerFuzz(name, fn, runs)` and the new
+  `Fuzz` module: seeded, deterministic generators for `INTEGER`, strings,
+  `DATE`, `DECIMAL`, `BOOLEAN` and array counts, with boundary values and
+  NULL. A failing run is shrunk by input size and reported with its seed,
+  size, inputs and replay options.
+- `--seed`, `--fuzz-runs` and `--fuzz-size` on the suite runner, and
+  forwarded by `fglunit-run`.
+- Self-tests, integration checks and `examples/CalculatorFuzz.4gl`.
+
 ## [0.2.2]
 
 First release intended for public consumption. Several of these are

@@ -21,11 +21,12 @@ both.
 8. [Skipping tests](#skipping-tests)
 9. [Running tests](#running-tests)
 10. [Discovery & running a whole test tree](#discovery--running-a-whole-test-tree)
-11. [JUnit XML for CI](#junit-xml-for-ci)
-12. [Failure vs Error](#failure-vs-error)
-13. [When to use fglunit vs GGC](#when-to-use-fglunit-vs-ggc)
-14. [Testing fglunit itself](#testing-fglunit-itself)
-15. [Limitations](#limitations)
+11. [Parametrized tests and fuzzing](#parametrized-tests-and-fuzzing)
+12. [JUnit XML for CI](#junit-xml-for-ci)
+13. [Failure vs Error](#failure-vs-error)
+14. [When to use fglunit vs GGC](#when-to-use-fglunit-vs-ggc)
+15. [Testing fglunit itself](#testing-fglunit-itself)
+16. [Limitations](#limitations)
 
 ---
 
@@ -268,6 +269,9 @@ fglrun my_tests.42m [options]
 | `-v`, `--verbose` | Show duration and failure details for every test |
 | `--fail-fast` | Stop on first FAIL or ERROR |
 | `--allow-empty` | Exit `0` even when no test ran |
+| `--seed <n>` | Base seed for fuzz targets (see [fuzzing](#parametrized-tests-and-fuzzing)) |
+| `--fuzz-runs <n>` | Runs per fuzz target; `0` skips them |
+| `--fuzz-size <n>` | Input size 0-100; replays a failure without shrinking it |
 | `--color <mode>` | `auto` (default), `always`, `never` |
 | `-h`, `--help` | Print usage |
 
@@ -397,6 +401,167 @@ every suite passes and at least one test actually ran.
 The `examples/` directory shows the full chain (generate → compile →
 aggregate) driven from a `Makefile`.
 
+## Parametrized tests and fuzzing
+
+Two registration calls go beyond `register`: **`registerCases`** runs one
+test function once per row of a table, and **`registerFuzz`** runs a test
+function many times with generated inputs. Both are called from a
+hand-written `MAIN`; `fglunit-gen` does not generate them. A fuzz test is
+an ordinary test whose inputs are generated, so it uses the same
+assertions, fixtures, filters, JUnit output and exit codes.
+
+### Parametrized tests
+
+Describe the rows as a record type, fill an array, and hand it over as
+JSON. The test function receives one row as a `util.JSONObject` and turns
+it back into the record with `toFGL`:
+
+```4gl
+IMPORT util
+
+IMPORT FGL com.fourjs.fglunit.FglUnit
+IMPORT FGL com.fourjs.fglunit.Assertions
+IMPORT FGL com.fourjs.fglunit.CliArgs
+IMPORT FGL Calculator
+
+PRIVATE TYPE tDivision RECORD
+   dividend INTEGER,
+   divisor  INTEGER,
+   expected INTEGER
+END RECORD
+
+MAIN
+   VAR rows DYNAMIC ARRAY OF tDivision
+   CALL CliArgs.parse()
+   LET rows[1].dividend = 10
+   LET rows[1].divisor = 2
+   LET rows[1].expected = 5
+   LET rows[2].dividend = -9
+   LET rows[2].divisor = 3
+   LET rows[2].expected = -3
+   CALL FglUnit.registerCases("divide", FUNCTION checkDivide,
+      util.JSONArray.fromFGL(rows))
+   EXIT PROGRAM FglUnit.run()
+END MAIN
+
+PRIVATE FUNCTION checkDivide(args util.JSONObject) RETURNS ()
+   VAR row tDivision
+   CALL args.toFGL(row)
+   CALL Assertions.assertEqualsInt(row.expected, Calculator.divide(row.dividend, row.divisor),
+      SFMT("%1 / %2", row.dividend, row.divisor))
+END FUNCTION
+```
+
+Each row is its own test, named `divide[1]`, `divide[2]`, ..., so
+`--filter`, `--list`, the console and the JUnit report all see them
+individually. A failing row prints the row itself:
+
+```
+  x divide[2]
+      case {"dividend":-9,"divisor":3,"expected":-4}
+      assertEqualsInt failed: -9 / 3
+```
+
+- An **empty table fails** (`registerCases: the table has no rows`) rather
+  than silently registering nothing.
+- `toFGL` matches members by name, case-insensitively, and turns a member
+  whose type does not match into NULL without an error. Declare the row
+  members with the same types the test uses, and `assertNotNull` a member
+  you depend on.
+
+### Fuzz targets
+
+`registerFuzz(name, fn, runs)` calls `fn` `runs` times (`NULL` means 100).
+`fn` is a plain test function that draws its inputs from the `Fuzz` module
+and checks a property that must hold for every input:
+
+```4gl
+IMPORT FGL com.fourjs.fglunit.FglUnit
+IMPORT FGL com.fourjs.fglunit.Assertions
+IMPORT FGL com.fourjs.fglunit.CliArgs
+IMPORT FGL com.fourjs.fglunit.Fuzz
+IMPORT FGL Calculator
+
+MAIN
+   CALL CliArgs.parse()
+   CALL FglUnit.registerFuzz("maxIsNotBelowEitherArgument", FUNCTION propMaxBounds, 200)
+   EXIT PROGRAM FglUnit.run()
+END MAIN
+
+PRIVATE FUNCTION propMaxBounds() RETURNS ()
+   VAR a INTEGER
+   VAR b INTEGER
+   VAR m INTEGER
+   CALL Fuzz.setNullRate(0)
+   LET a = Fuzz.nextInt(NULL, NULL)
+   LET b = Fuzz.nextInt(NULL, NULL)
+   LET m = Calculator.max(a, b)
+   CALL Assertions.assertTrue(m >= a AND m >= b, SFMT("max(%1, %2) = %3", a, b, m))
+END FUNCTION
+```
+
+The generators (`Fuzz` module). All of them are deterministic from the
+seed, so a run is repeatable on every platform:
+
+| Function | Besides random values, it produces |
+|---|---|
+| `nextInt(lowest, highest)` | the bounds, the bounds +/- 1, 0, 1, -1; the whole `INTEGER` range when the bounds are `NULL` |
+| `nextString(maxLength)` | blanks, quotes, `%` and `*`, a backslash, SQL / JSON / markup fragments, tabs, newlines, ESC, multibyte UTF-8, a combining accent, a string of exactly `maxLength` |
+| `nextDate()` | 31/12/1899, 1/1/1, 29 February, 31/12/9999 |
+| `nextDecimal(lowest, highest)` | the bounds, 0, plus or minus 0.0000000001 |
+| `nextBoolean()` | `TRUE`, `FALSE` |
+| `nextCount(highest)` | 0, 1, `highest` (the length of an array to build; never `NULL`) |
+
+- **NULL is generated by default** (5 percent of values), because it is the
+  commonest BDL edge case. `Fuzz.setNullRate(0)` turns it off for the rest
+  of the run; `setNullRate(100)` makes everything NULL. An empty string is
+  NULL in BDL, so it is covered by the NULL rate.
+- The generators can be used in an ordinary test too: call
+  `Fuzz.seed(n)` first for a repeatable stream.
+- A target fails when an assertion fails or when it raises a runtime error.
+  Expression errors such as division by zero propagate only through
+  functions that declare `WHENEVER ANY ERROR RAISE`, exactly as for
+  [`assertThrows`](#testing-error-paths).
+
+**Seeds and replay.** `run` *k* of a target uses seed *base + k - 1*. The
+base seed comes from the clock and is printed at the start (`fuzz seed
+142241984`); `--seed` fixes it. The first failing run stops the target.
+
+**Shrinking.** After a failure, the runner re-runs the same seed at smaller
+*sizes*: at a small size numbers stay near 0, dates near 1 January 2000, and
+strings and counts are short. It keeps the smallest size that still fails
+and reports it with the inputs that were drawn:
+
+```
+  x badFuzz
+      fuzz: failed on run 1 of 200
+        seed:   142241984
+        size:   26 (shrunk from 100)
+        inputs: str="p^iT^?\t!"Szhg5sGxq" (18 chars)
+        replay: --filter badFuzz --seed 142241984 --fuzz-size 26 --fuzz-runs 1
+      assertTrue failed: length 18 exceeds 10
+```
+
+Run the `replay:` options to reproduce that exact failure. An explicit
+`--fuzz-size` runs at that size and does not shrink again, so the replay
+shows the same inputs. A runtime error shrinks the same way (a division by
+zero typically shrinks to `int=0` at size 0).
+
+| Option | Effect |
+|---|---|
+| `--seed <n>` | Base seed (any whole number; it is folded into 1 .. 2147483646) |
+| `--fuzz-runs <n>` | Override the runs of every fuzz target; `0` skips them (reported as SKIP) |
+| `--fuzz-size <n>` | Fix the input size (0-100); disables shrinking |
+
+`fglunit-run` forwards all three to each suite.
+
+**What fuzzing here is not.** The shrinker is a heuristic: it searches
+sizes for one seed, so the reported size is a local minimum and a failure
+need not be monotonic in size. There are no saved corpus files, no
+coverage guidance, and no generators for `BIGINT`, `FLOAT`, `INTERVAL` or
+records; build those from the primitives above. Inputs are drawn by the
+test, not derived from a function's signature.
+
 ## JUnit XML for CI
 
 ```bash
@@ -496,8 +661,9 @@ END FUNCTION
   in v2.
 - **No parallel test execution.** Tests run sequentially in
   registration order.
-- **No parametrized tests in v1.** Use one function per parameter set,
-  or call a private helper from each test.
+- **Parametrized tests and fuzz targets are registered by hand.**
+  `fglunit-gen` does not discover them; see
+  [Parametrized tests and fuzzing](#parametrized-tests-and-fuzzing).
 - **`assertThrows` requires `WHENEVER ANY ERROR RAISE`** on every frame
   in the call path for expression errors. See
   [Testing error paths](#testing-error-paths).

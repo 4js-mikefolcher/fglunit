@@ -1,5 +1,7 @@
 PACKAGE com.fourjs.fglunit
 
+IMPORT util
+
 IMPORT FGL com.fourjs.fglunit.FglUnit
 
 # Parses command-line flags and pushes them into FglUnit via setters.
@@ -21,6 +23,9 @@ IMPORT FGL com.fourjs.fglunit.FglUnit
 #   -v, --verbose       per-test output
 #   --fail-fast         stop on first failure
 #   --allow-empty       exit 0 even when no test ran
+#   --seed <n>          base seed for fuzz targets
+#   --fuzz-runs <n>     runs per fuzz target (0 skips them)
+#   --fuzz-size <n>     input size 0-100, to replay a shrunk failure
 #   --color <mode>      auto | always | never
 #   -h, --help          print usage and exit 0
 
@@ -52,6 +57,18 @@ PUBLIC FUNCTION parse()
                 LET next = consumeValue(arg, i, n)
                 LET i = i + 1
                 CALL FglUnit.setFilter(next)
+            WHEN arg = "--seed"
+                LET next = consumeValue(arg, i, n)
+                LET i = i + 1
+                CALL FglUnit.setFuzzSeed(parseNumber(arg, next))
+            WHEN arg = "--fuzz-runs"
+                LET next = consumeValue(arg, i, n)
+                LET i = i + 1
+                CALL FglUnit.setFuzzRuns(parseNumber(arg, next))
+            WHEN arg = "--fuzz-size"
+                LET next = consumeValue(arg, i, n)
+                LET i = i + 1
+                CALL FglUnit.setFuzzSize(parseNumber(arg, next))
             WHEN arg = "--color"
                 LET next = consumeValue(arg, i, n)
                 LET i = i + 1
@@ -80,6 +97,17 @@ PRIVATE FUNCTION consumeValue(flag STRING, i INTEGER, n INTEGER) RETURNS STRING
     RETURN arg_val(i + 1)
 END FUNCTION
 
+#+ A non-negative whole number of at most 10 digits, or a usage error (exit 2).
+PRIVATE FUNCTION parseNumber(flag STRING, text STRING) RETURNS BIGINT
+   VAR re util.Regexp = util.Regexp.compile("^[0-9]{1,10}$")
+   IF NOT re.matches(text) THEN
+      DISPLAY SFMT("fglunit: option '%1' needs a non-negative whole number (got '%2')",
+         flag, text)
+      EXIT PROGRAM 2
+   END IF
+   RETURN text
+END FUNCTION
+
 PRIVATE FUNCTION printUsage()
     DISPLAY "Usage: fglrun <test_program>.42m [options]"
     DISPLAY ""
@@ -90,6 +118,9 @@ PRIVATE FUNCTION printUsage()
     DISPLAY "  -v, --verbose        Per-test output"
     DISPLAY "  --fail-fast          Stop on first failure"
     DISPLAY "  --allow-empty        Exit 0 even when no test ran"
+    DISPLAY "  --seed <n>           Base seed for fuzz targets (run k uses n + k - 1)"
+    DISPLAY "  --fuzz-runs <n>      Runs per fuzz target (0 skips them)"
+    DISPLAY "  --fuzz-size <n>      Input size 0-100 (replays a shrunk failure)"
     DISPLAY "  --color <mode>       auto (default) | always | never"
     DISPLAY "                       auto also honours NO_COLOR and TERM=dumb"
     DISPLAY "  -h, --help           Show this help"

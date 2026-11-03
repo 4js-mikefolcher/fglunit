@@ -13,6 +13,8 @@ PACKAGE com.fourjs.fglunit
 #     --dir <d>       run every *.run.42m under <d> (non-recursive)
 #     --junit <file>  write the aggregated <testsuites> XML
 #     --filter <pat>  passed through to each child suite
+#     --seed <n>, --fuzz-runs <n>, --fuzz-size <n>
+#                     passed through (fuzz targets; digits only)
 #     --fail-fast     stop after the first failing suite
 #     --allow-empty   exit 0 even when no suite ran a single test
 #     -v, --verbose   passed through; also echoes each child's console
@@ -27,6 +29,7 @@ IMPORT FGL com.fourjs.fglunit.Internal
 PRIVATE DEFINE progs DYNAMIC ARRAY OF STRING
 PRIVATE DEFINE optJunit, optFilter STRING
 PRIVATE DEFINE optColor STRING
+PRIVATE DEFINE optSeed, optFuzzRuns, optFuzzSize STRING   # digits only
 PRIVATE DEFINE optVerbose, optFailFast, optAllowEmpty BOOLEAN
 PRIVATE DEFINE origLdPath STRING   # FGLLDPATH as inherited, restored per child
 
@@ -134,6 +137,16 @@ PRIVATE FUNCTION buildCmd(prog STRING, xmlPath STRING) RETURNS STRING
         shellArg("temporary file path", xmlPath)))
     IF optFilter IS NOT NULL AND optFilter.getLength() > 0 THEN
         CALL sb.append(SFMT(" --filter %1", shellArg("--filter", optFilter)))
+    END IF
+    # Validated as digits when parsed, so they cannot carry shell syntax.
+    IF optSeed IS NOT NULL THEN
+        CALL sb.append(SFMT(" --seed %1", optSeed))
+    END IF
+    IF optFuzzRuns IS NOT NULL THEN
+        CALL sb.append(SFMT(" --fuzz-runs %1", optFuzzRuns))
+    END IF
+    IF optFuzzSize IS NOT NULL THEN
+        CALL sb.append(SFMT(" --fuzz-size %1", optFuzzSize))
     END IF
     IF optVerbose THEN
         CALL sb.append(" -v")
@@ -286,6 +299,15 @@ PRIVATE FUNCTION parseArgs()
             WHEN arg == "--filter"
                 LET optFilter = needValue(arg, i, n)
                 LET i = i + 1
+            WHEN arg == "--seed"
+                LET optSeed = needNumber(arg, i, n)
+                LET i = i + 1
+            WHEN arg == "--fuzz-runs"
+                LET optFuzzRuns = needNumber(arg, i, n)
+                LET i = i + 1
+            WHEN arg == "--fuzz-size"
+                LET optFuzzSize = needNumber(arg, i, n)
+                LET i = i + 1
             WHEN arg == "--color"
                 LET optColor = needValue(arg, i, n)
                 LET i = i + 1
@@ -309,6 +331,18 @@ PRIVATE FUNCTION parseArgs()
         END CASE
         LET i = i + 1
     END WHILE
+END FUNCTION
+
+#+ The value of a numeric option: one to ten digits, or a usage error.
+PRIVATE FUNCTION needNumber(flag STRING, i INTEGER, n INTEGER) RETURNS STRING
+   VAR text STRING = needValue(flag, i, n)
+   VAR re util.Regexp = util.Regexp.compile("^[0-9]{1,10}$")
+   IF NOT re.matches(text) THEN
+      DISPLAY SFMT("fglunit-run: option '%1' needs a non-negative whole number (got '%2')",
+         flag, text)
+      EXIT PROGRAM 2
+   END IF
+   RETURN text
 END FUNCTION
 
 PRIVATE FUNCTION needValue(flag STRING, i INTEGER, n INTEGER) RETURNS STRING
@@ -407,6 +441,9 @@ PRIVATE FUNCTION usage()
     DISPLAY "  --dir <d>       Run every *.run.42m under <d> (non-recursive)"
     DISPLAY "  --junit <file>  Write the aggregated <testsuites> XML"
     DISPLAY "  --filter <pat>  Passed through to each child suite"
+    DISPLAY "  --seed <n>      Passed through: base seed for fuzz targets"
+    DISPLAY "  --fuzz-runs <n> Passed through: runs per fuzz target"
+    DISPLAY "  --fuzz-size <n> Passed through: fuzz input size"
     DISPLAY "  --fail-fast     Stop after the first failing suite"
     DISPLAY "  --allow-empty   Exit 0 even when no suite ran a test"
     DISPLAY "  -v, --verbose   Echo each child's console output"

@@ -34,3 +34,5 @@ fglpkg.lock
 # AI Files
 .mcp.json
 
+# MacOS Files
+.DS_Store
