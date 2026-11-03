@@ -7,7 +7,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 `fglpkg publish` reads the section matching the version in `fglpkg.json`,
 so every release needs an entry here before it is published.
 
-## [Unreleased]
+## [1.1.0]
 
 ### Added
 
