@@ -463,7 +463,10 @@ individually. A failing row prints the row itself:
 ```
 
 - An **empty table fails** (`registerCases: the table has no rows`) rather
-  than silently registering nothing.
+  than silently registering nothing. So does a **row that is not a record**,
+  such as a table built from a `DYNAMIC ARRAY OF INTEGER`: that row fails by
+  name (`row 1 of 'name' is a number, not a record`) instead of stopping the
+  program.
 - `toFGL` matches members by name, case-insensitively, and turns a member
   whose type does not match into NULL without an error. Declare the row
   members with the same types the test uses, and `assertNotNull` a member
@@ -522,6 +525,10 @@ seed, so a run is repeatable on every platform:
   Expression errors such as division by zero propagate only through
   functions that declare `WHENEVER ANY ERROR RAISE`, exactly as for
   [`assertThrows`](#testing-error-paths).
+- A target can call `Assertions.skip` to **discard an input it cannot use**.
+  That run is not a failure and does not end the target: the next run draws
+  a new input. The target passes if at least one run was tested, and is
+  reported as skipped only when every run was discarded.
 
 **Seeds and replay.** `run` *k* of a target uses seed *base + k - 1*. The
 base seed comes from the clock and is printed at the start (`fuzz seed
@@ -549,9 +556,12 @@ zero typically shrinks to `int=0` at size 0).
 
 | Option | Effect |
 |---|---|
-| `--seed <n>` | Base seed (any whole number; it is folded into 1 .. 2147483646) |
-| `--fuzz-runs <n>` | Override the runs of every fuzz target; `0` skips them (reported as SKIP) |
-| `--fuzz-size <n>` | Fix the input size (0-100); disables shrinking |
+| `--seed <n>` | Base seed (a whole number of up to 10 digits; it is folded into 1 .. 2147483646) |
+| `--fuzz-runs <n>` | Override the runs of every fuzz target, 0 to 2147483647; `0` skips them (reported as SKIP) |
+| `--fuzz-size <n>` | Fix the input size (0-100; larger values count as 100); disables shrinking |
+
+A value outside these ranges, or that is not a whole number, is a usage
+error (exit 2).
 
 `fglunit-run` forwards all three to each suite.
 

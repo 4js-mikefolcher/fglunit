@@ -77,8 +77,9 @@ says "a plain skip reports SKIP"             "- delta_skips"
 says "a failure outranks a skip"             "x epsilon_skip_then_fails"
 
 # cases and fuzz targets. fixture_Fuzz is deliberately not green: okFuzz
-# holds, badFuzz fails an assertion, errFuzz raises, badCases has one bad
-# row and noCases has none.
+# holds, badFuzz fails an assertion, errFuzz raises, skipSomeFuzz discards
+# some inputs, skipAllFuzz discards every one, badCases has one bad row,
+# noCases has none and scalarRows is a table of integers, not records.
 FUZZFIX=./fixture_Fuzz.42m
 fuzzfix() { fglrun "$FUZZFIX" --color never "$@"; }
 
@@ -110,6 +111,12 @@ fuzz_says    "--fuzz-runs 0 skips fuzz targets"  "fuzzing disabled"  --filter ok
 fuzz_says    "--fuzz-size replays without shrinking again"  "size:   20$"  --filter badFuzz --seed 5 --fuzz-size 20 --fuzz-runs 200
 fuzz_exit_is "a run with every fuzz target skipped exits 0"   0 --filter okFuzz --fuzz-runs 0
 
+# skip() inside a fuzz run discards that input; it does not end the target.
+fuzz_says    "a skipped run does not end the target"  "v skipSomeFuzz"  --filter skipSomeFuzz --seed 1
+fuzz_says    "skipping every run reports SKIP"        "- skipAllFuzz"    --filter skipAllFuzz
+fuzz_says    "and says all runs were skipped"         "all 20 runs were skipped"  --filter skipAllFuzz -v
+fuzz_exit_is "skipping every run is not a failure"    0 --filter skipAllFuzz
+
 # The same seed gives the same failure, and the replay options reproduce
 # exactly the shrunk failure the first run reported.
 first=$(fuzzfix --filter badFuzz --seed 5 2>&1)
@@ -140,6 +147,8 @@ fuzz_says    "and only that row fails"           "Failed: 1"     --filter badCas
 fuzz_says    "a failing row names itself"        'case {"a":2,"b":2,"expected":5}'  --filter badCases
 fuzz_exit_is "an empty case table fails the run"              1 --filter noCases
 fuzz_says    "and says so"                       "table has no rows"  --filter noCases
+fuzz_exit_is "a table of non-records fails the run"           1 --filter scalarRows
+fuzz_says    "and says what is wrong"            "is a number, not a record"  --filter scalarRows
 lines=$(fuzzfix --list --filter Cases 2>&1 | grep -c .)
 if [ "$lines" -eq 6 ]; then pass "--list expands every case"; else fail "--list expands every case" "$lines lines, wanted 6"; fi
 
@@ -157,6 +166,12 @@ fuzz_exit_is "--seed with a non-number exits 2"               2 --seed abc
 fuzz_exit_is "--seed without a value exits 2"                 2 --seed
 fuzz_exit_is "--fuzz-runs with a negative number exits 2"     2 --fuzz-runs -1
 fuzz_exit_is "--fuzz-size with a non-number exits 2"          2 --fuzz-size big
+fuzz_exit_is "--fuzz-runs above the INTEGER range exits 2"    2 --fuzz-runs 2147483648
+fuzz_exit_is "--fuzz-size above the INTEGER range exits 2"    2 --fuzz-size 9999999999
+fuzz_exit_is "--fuzz-size at the INTEGER limit is accepted"   0 --filter okFuzz --fuzz-size 2147483647 --fuzz-runs 1
+fuzz_exit_is "--seed with an empty value exits 2"             2 --seed ""
+fglrun "$runner" --fuzz-runs 2147483648 "$FUZZFIX" >/dev/null 2>&1
+if [ $? -eq 2 ]; then pass "fglunit-run refuses --fuzz-runs above the INTEGER range"; else fail "fglunit-run refuses --fuzz-runs above the INTEGER range" "did not exit 2"; fi
 
 if [ "$FAILED" -eq 0 ]; then
     echo ""

@@ -13,14 +13,18 @@ so every release needs an entry here before it is published.
 
 - **Parametrized tests:** `FglUnit.registerCases(name, fn, cases)` runs `fn`
   once per row, each row its own test (`name[1]`, `name[2]`, ...). A
-  failing row prints the row; an empty table fails rather than vanishing.
+  failing row prints the row; an empty table, or a row that is not a
+  record, fails rather than vanishing or crashing.
 - **Fuzz targets:** `FglUnit.registerFuzz(name, fn, runs)` and the new
   `Fuzz` module: seeded, deterministic generators for `INTEGER`, strings,
   `DATE`, `DECIMAL`, `BOOLEAN` and array counts, with boundary values and
   NULL. A failing run is shrunk by input size and reported with its seed,
-  size, inputs and replay options.
+  size, inputs and replay options. `skip()` inside a run discards that
+  input and the target carries on; it is reported as skipped only when
+  every run was.
 - `--seed`, `--fuzz-runs` and `--fuzz-size` on the suite runner, and
-  forwarded by `fglunit-run`.
+  forwarded by `fglunit-run`. A value that is not a whole number in range
+  exits 2.
 - Self-tests, integration checks and `examples/CalculatorFuzz.4gl`.
 
 ## [0.2.2]

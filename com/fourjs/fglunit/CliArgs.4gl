@@ -29,6 +29,11 @@ IMPORT FGL com.fourjs.fglunit.FglUnit
 #   --color <mode>      auto | always | never
 #   -h, --help          print usage and exit 0
 
+# Largest values the fuzz options accept: --seed is a BIGINT (10 digits),
+# the other two are INTEGERs.
+PRIVATE CONSTANT cMaxSeed = 9999999999
+PRIVATE CONSTANT cMaxInteger = 2147483647
+
 PUBLIC FUNCTION parse()
     DEFINE n, i INTEGER
     DEFINE arg, next STRING
@@ -60,15 +65,15 @@ PUBLIC FUNCTION parse()
             WHEN arg = "--seed"
                 LET next = consumeValue(arg, i, n)
                 LET i = i + 1
-                CALL FglUnit.setFuzzSeed(parseNumber(arg, next))
+                CALL FglUnit.setFuzzSeed(parseNumber(arg, next, cMaxSeed))
             WHEN arg = "--fuzz-runs"
                 LET next = consumeValue(arg, i, n)
                 LET i = i + 1
-                CALL FglUnit.setFuzzRuns(parseNumber(arg, next))
+                CALL FglUnit.setFuzzRuns(parseNumber(arg, next, cMaxInteger))
             WHEN arg = "--fuzz-size"
                 LET next = consumeValue(arg, i, n)
                 LET i = i + 1
-                CALL FglUnit.setFuzzSize(parseNumber(arg, next))
+                CALL FglUnit.setFuzzSize(parseNumber(arg, next, cMaxInteger))
             WHEN arg = "--color"
                 LET next = consumeValue(arg, i, n)
                 LET i = i + 1
@@ -97,15 +102,24 @@ PRIVATE FUNCTION consumeValue(flag STRING, i INTEGER, n INTEGER) RETURNS STRING
     RETURN arg_val(i + 1)
 END FUNCTION
 
-#+ A non-negative whole number of at most 10 digits, or a usage error (exit 2).
-PRIVATE FUNCTION parseNumber(flag STRING, text STRING) RETURNS BIGINT
+#+ A whole number from 0 to largest (at most 10 digits), or a usage error
+#+ (exit 2). The range matters: the value goes into an INTEGER or BIGINT
+#+ setter, and a number too big for it would become NULL, which the setter
+#+ reads as "option not given" and silently ignores.
+PRIVATE FUNCTION parseNumber(flag STRING, text STRING, largest BIGINT) RETURNS BIGINT
    VAR re util.Regexp = util.Regexp.compile("^[0-9]{1,10}$")
-   IF NOT re.matches(text) THEN
-      DISPLAY SFMT("fglunit: option '%1' needs a non-negative whole number (got '%2')",
-         flag, text)
+   VAR value BIGINT = 0
+   VAR valid BOOLEAN = FALSE
+   IF text IS NOT NULL AND re.matches(text) THEN
+      LET value = text
+      LET valid = (value <= largest)
+   END IF
+   IF NOT valid THEN
+      DISPLAY SFMT("fglunit: option '%1' needs a whole number from 0 to %2 (got '%3')",
+         flag, largest, NVL(text, ""))
       EXIT PROGRAM 2
    END IF
-   RETURN text
+   RETURN value
 END FUNCTION
 
 PRIVATE FUNCTION printUsage()

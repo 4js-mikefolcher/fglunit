@@ -1,7 +1,7 @@
 # Fixture program for integration.sh -- deliberately NOT green.
 #
-# It holds fuzz targets and parametrized tests that pass, fail and error,
-# so the driver can check what a suite cannot check about itself: exit
+# It holds fuzz targets and parametrized tests that pass, fail, error and
+# skip, so the driver can check what a suite cannot check about itself: exit
 # codes, the seed line, the failure message with its replay options, that
 # a replay reproduces the failure, and that bad options exit 2.
 
@@ -22,12 +22,15 @@ MAIN
    VAR goodRows DYNAMIC ARRAY OF tAdd
    VAR badRows DYNAMIC ARRAY OF tAdd
    VAR noRows DYNAMIC ARRAY OF tAdd
+   VAR scalarRows DYNAMIC ARRAY OF INTEGER
    CALL CliArgs.parse()
    CALL FglUnit.suite("fuzz fixture")
 
    CALL FglUnit.registerFuzz("okFuzz", FUNCTION fuzzOk, 50)
    CALL FglUnit.registerFuzz("badFuzz", FUNCTION fuzzBad, 200)
    CALL FglUnit.registerFuzz("errFuzz", FUNCTION fuzzErr, 200)
+   CALL FglUnit.registerFuzz("skipSomeFuzz", FUNCTION fuzzSkipSome, 200)
+   CALL FglUnit.registerFuzz("skipAllFuzz", FUNCTION fuzzSkipAll, 20)
 
    LET goodRows[1].a = 1
    LET goodRows[1].b = 2
@@ -47,6 +50,10 @@ MAIN
    CALL FglUnit.registerCases("okCases", FUNCTION checkAdd, util.JSONArray.fromFGL(goodRows))
    CALL FglUnit.registerCases("badCases", FUNCTION checkAdd, util.JSONArray.fromFGL(badRows))
    CALL FglUnit.registerCases("noCases", FUNCTION checkAdd, util.JSONArray.fromFGL(noRows))
+   # Rows that are not records: a table of plain integers.
+   LET scalarRows[1] = 5
+   LET scalarRows[2] = 6
+   CALL FglUnit.registerCases("scalarRows", FUNCTION checkAdd, util.JSONArray.fromFGL(scalarRows))
 
    EXIT PROGRAM FglUnit.run()
 END MAIN
@@ -86,4 +93,22 @@ PRIVATE FUNCTION fuzzErr() RETURNS ()
    CALL Fuzz.setNullRate(0)
    LET n = Fuzz.nextInt(0, 3)
    LET quotient = 12 / n
+END FUNCTION
+
+# Discards the inputs it cannot use with skip(), and holds for the rest. A
+# skipped run must not end the target: it is only a discarded input.
+PRIVATE FUNCTION fuzzSkipSome() RETURNS ()
+   VAR n INTEGER
+   CALL Fuzz.setNullRate(0)
+   LET n = Fuzz.nextInt(1, 6)
+   IF n = 1 THEN
+      CALL Assertions.skip("a 1 is not interesting")
+      RETURN
+   END IF
+   CALL Assertions.assertTrue(n >= 2 AND n <= 6, "a die roll is 1 to 6")
+END FUNCTION
+
+# Skips every run: nothing was tested, so the target is reported as skipped.
+PRIVATE FUNCTION fuzzSkipAll() RETURNS ()
+   CALL Assertions.skip("nothing here is interesting")
 END FUNCTION

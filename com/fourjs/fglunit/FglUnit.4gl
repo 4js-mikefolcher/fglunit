@@ -29,11 +29,13 @@ END RECORD
 # Module-private state ----------------------------------------------
 
 PRIVATE CONSTANT cKindCase = "case"
+PRIVATE CONSTANT cKindBadRow = "badrow"
 PRIVATE CONSTANT cKindFuzz = "fuzz"
 PRIVATE CONSTANT cDefaultFuzzRuns = 100
 
 # kind is NULL for a plain test. A case carries its row as JSON text and
-# runs through the runCase trampoline; a fuzz target carries its run count.
+# runs through the runCase trampoline; a row that is not a record carries
+# its failure message in args instead; a fuzz target carries its run count.
 PRIVATE TYPE Registration RECORD
     name STRING,
     fn TestHandler,
@@ -116,8 +118,9 @@ END FUNCTION
 #+ Register one test per row of cases. Each run is named name[1], name[2],
 #+ ... and calls fn with the row as a JSON object, so a failure names the
 #+ row. Build cases with util.JSONArray.fromFGL(rows), where rows is a
-#+ DYNAMIC ARRAY OF a named record type. An empty table is reported as a
-#+ failing test, never silently dropped.
+#+ DYNAMIC ARRAY OF a named record type. An empty table, and a row that is
+#+ not a record (a table of plain integers, say), are reported as failing
+#+ tests, never silently dropped and never a crash.
 PUBLIC FUNCTION registerCases(name STRING, fn CaseHandler,
       cases util.JSONArray) RETURNS ()
    VAR r Registration
@@ -131,12 +134,22 @@ PUBLIC FUNCTION registerCases(name STRING, fn CaseHandler,
    END IF
    FOR i = 1 TO cases.getLength()
       INITIALIZE r.* TO NULL
-      LET row = cases.get(i)
       LET r.name = SFMT("%1[%2]", name, i)
-      LET r.fn = FUNCTION runCase
-      LET r.kind = cKindCase
-      LET r.argFn = fn
-      LET r.args = row.toString()
+      IF cases.getType(i) == "OBJECT" THEN
+         LET row = cases.get(i)
+         LET r.fn = FUNCTION runCase
+         LET r.kind = cKindCase
+         LET r.argFn = fn
+         LET r.args = row.toString()
+      ELSE
+         # Reading a plain value as a record would stop the program with a
+         # conversion error. Fail this row by name instead.
+         LET r.fn = FUNCTION notARecord
+         LET r.kind = cKindBadRow
+         LET r.args = SFMT("registerCases: row %1 of '%2' is a %3, not a record "
+            || "(build the table from a DYNAMIC ARRAY OF a record type)",
+            i, name, downshift(cases.getType(i)))
+      END IF
       LET registry[registry.getLength() + 1].* = r.*
    END FOR
 END FUNCTION
@@ -471,6 +484,9 @@ PRIVATE FUNCTION runEntry(reg Registration) RETURNS TestResult
          IF r.status == STATUS_FAIL OR r.status == STATUS_ERROR THEN
             LET r.message = SFMT("case %1\n%2", reg.args, NVL(r.message, ""))
          END IF
+      WHEN cKindBadRow
+         LET activeArgs = reg.args
+         CALL runOne(reg.name, reg.fn) RETURNING r.*
       OTHERWISE
          CALL runOne(reg.name, reg.fn) RETURNING r.*
    END CASE
@@ -489,6 +505,12 @@ PRIVATE FUNCTION emptyCases() RETURNS ()
    CALL notifyFailure("registerCases: the table has no rows, so nothing was tested", NULL)
 END FUNCTION
 
+# The TestHandler of a row that is not a record: it fails with the message
+# registerCases prepared.
+PRIVATE FUNCTION notARecord() RETURNS ()
+   CALL notifyFailure(activeArgs, NULL)
+END FUNCTION
+
 # Run a fuzz target: one seed per run, stop at the first failure and shrink
 # it. A pass is one PASS result; a failure is one FAIL or ERROR result whose
 # message carries everything needed to replay it.
@@ -498,12 +520,14 @@ PRIVATE FUNCTION runFuzz(reg Registration) RETURNS TestResult
    VAR runs INTEGER
    VAR size INTEGER
    VAR i INTEGER
-   VAR failedRun INTEGER
+   VAR failedRun INTEGER = 0
    VAR failSeed INTEGER
    VAR bestSize INTEGER
    VAR bestTrace STRING
    VAR sizeText STRING
    VAR totalMs INTEGER
+   VAR skippedRuns INTEGER = 0
+   VAR skipNote STRING
 
    LET runs = NVL(reg.runs, cDefaultFuzzRuns)
    IF optFuzzRunsSet THEN
@@ -517,7 +541,7 @@ PRIVATE FUNCTION runFuzz(reg Registration) RETURNS TestResult
 
    IF runs <= 0 THEN
       LET r.status = STATUS_SKIP
-      LET r.message = "fuzzing disabled (--fuzz-runs 0)"
+      LET r.message = "fuzzing disabled (0 runs)"
       RETURN r
    END IF
 
@@ -525,6 +549,14 @@ PRIVATE FUNCTION runFuzz(reg Registration) RETURNS TestResult
       LET failSeed = Fuzz.begin(fuzzBase + i - 1, size)
       CALL runOne(reg.name, reg.fn) RETURNING r.*
       LET totalMs = totalMs + r.durationMs
+      # skip() discards the input of this run, as "assume" does elsewhere:
+      # it is not a failure and it does not end the target. Stopping here
+      # would silently drop every later run.
+      IF r.status == STATUS_SKIP THEN
+         LET skippedRuns = skippedRuns + 1
+         LET skipNote = r.message
+         CONTINUE FOR
+      END IF
       IF r.status != STATUS_PASS THEN
          LET failedRun = i
          EXIT FOR
@@ -532,7 +564,16 @@ PRIVATE FUNCTION runFuzz(reg Registration) RETURNS TestResult
    END FOR
 
    LET r.durationMs = totalMs
-   IF r.status == STATUS_PASS OR r.status == STATUS_SKIP THEN
+   IF failedRun == 0 THEN
+      # No run failed. The target passed if any run was actually tested, and
+      # is reported as skipped only when every run discarded its input.
+      IF skippedRuns == runs THEN
+         LET r.status = STATUS_SKIP
+         LET r.message = SFMT("all %1 runs were skipped (%2)", runs, NVL(skipNote, "skipped"))
+      ELSE
+         LET r.status = STATUS_PASS
+         LET r.message = NULL
+      END IF
       RETURN r
    END IF
 

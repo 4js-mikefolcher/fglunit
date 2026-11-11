@@ -26,6 +26,11 @@ IMPORT util
 IMPORT FGL com.fourjs.fglunit.Aggregator
 IMPORT FGL com.fourjs.fglunit.Internal
 
+# Largest values the fuzz options accept: --seed is a BIGINT (10 digits),
+# the other two are INTEGERs in the suites they are forwarded to.
+PRIVATE CONSTANT cMaxSeed = 9999999999
+PRIVATE CONSTANT cMaxInteger = 2147483647
+
 PRIVATE DEFINE progs DYNAMIC ARRAY OF STRING
 PRIVATE DEFINE optJunit, optFilter STRING
 PRIVATE DEFINE optColor STRING
@@ -300,13 +305,13 @@ PRIVATE FUNCTION parseArgs()
                 LET optFilter = needValue(arg, i, n)
                 LET i = i + 1
             WHEN arg == "--seed"
-                LET optSeed = needNumber(arg, i, n)
+                LET optSeed = needNumber(arg, i, n, cMaxSeed)
                 LET i = i + 1
             WHEN arg == "--fuzz-runs"
-                LET optFuzzRuns = needNumber(arg, i, n)
+                LET optFuzzRuns = needNumber(arg, i, n, cMaxInteger)
                 LET i = i + 1
             WHEN arg == "--fuzz-size"
-                LET optFuzzSize = needNumber(arg, i, n)
+                LET optFuzzSize = needNumber(arg, i, n, cMaxInteger)
                 LET i = i + 1
             WHEN arg == "--color"
                 LET optColor = needValue(arg, i, n)
@@ -333,16 +338,25 @@ PRIVATE FUNCTION parseArgs()
     END WHILE
 END FUNCTION
 
-#+ The value of a numeric option: one to ten digits, or a usage error.
-PRIVATE FUNCTION needNumber(flag STRING, i INTEGER, n INTEGER) RETURNS STRING
+#+ The value of a numeric option: a whole number from 0 to largest (at most
+#+ ten digits), or a usage error. It is forwarded to the suites as digits,
+#+ so it cannot carry shell syntax, and the range is checked here because a
+#+ suite would refuse an out-of-range value and be reported as crashed.
+PRIVATE FUNCTION needNumber(flag STRING, i INTEGER, n INTEGER, largest BIGINT) RETURNS STRING
    VAR text STRING = needValue(flag, i, n)
    VAR re util.Regexp = util.Regexp.compile("^[0-9]{1,10}$")
-   IF NOT re.matches(text) THEN
-      DISPLAY SFMT("fglunit-run: option '%1' needs a non-negative whole number (got '%2')",
-         flag, text)
+   VAR value BIGINT = 0
+   VAR valid BOOLEAN = FALSE
+   IF text IS NOT NULL AND re.matches(text) THEN
+      LET value = text
+      LET valid = (value <= largest)
+   END IF
+   IF NOT valid THEN
+      DISPLAY SFMT("fglunit-run: option '%1' needs a whole number from 0 to %2 (got '%3')",
+         flag, largest, NVL(text, ""))
       EXIT PROGRAM 2
    END IF
-   RETURN text
+   RETURN value
 END FUNCTION
 
 PRIVATE FUNCTION needValue(flag STRING, i INTEGER, n INTEGER) RETURNS STRING
