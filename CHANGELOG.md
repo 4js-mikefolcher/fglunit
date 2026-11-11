@@ -27,6 +27,19 @@ so every release needs an entry here before it is published.
   exits 2.
 - Self-tests, integration checks and `examples/CalculatorFuzz.4gl`.
 
+## [1.0.1]
+
+No changes to the package. Only the version number in `fglpkg.json` differs
+from 1.0.0; the source, tools and documentation are identical.
+
+## [1.0.0]
+
+The first public release. It contains exactly the changes listed under
+0.2.2 below: that was the version number the manifest carried while the
+work was in progress, and it was released as 1.0.0 instead. There was never
+a 0.2.2 release. Read **Changed** under 0.2.2 before upgrading a CI
+pipeline.
+
 ## [0.2.2]
 
 First release intended for public consumption. Several of these are
