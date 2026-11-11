@@ -555,8 +555,10 @@ multibyte character itself depends on the environment.
   reported as skipped only when every run was discarded. A pass that
   discarded some runs says so (`1 of 100 runs tested, 99 skipped`), so a
   generator or precondition that quietly stops producing usable input does
-  not look like a full run. Fuzz targets do not fail for skipping too much;
-  watch for that line.
+  not look like a full run. The JUnit report carries the same text in a
+  `<system-out>` element on the passing testcase, so a CI dashboard can show
+  it; the testcase is still a pass. Fuzz targets do not fail for skipping
+  too much; watch for that line.
 
 **Seeds and replay.** `run` *k* of a target uses seed *base + k - 1*. The
 base seed comes from the clock and is printed at the start (`fuzz seed
@@ -589,6 +591,14 @@ the failure says so (`note:   --filter is a substring match and also selects
 badder`); the target you are replaying still fails with the same inputs, and
 the others are extra. There is no exact-match option.
 
+On Windows the line is quoted with double quotes (`--filter "bad prop"`).
+cmd.exe has no safe way to write a name that contains a double quote, a `%`,
+a line break, or a backslash as its last character, so for such a name the
+line reads `--filter NAME` and a `note:` asks you to put the name in, quoted
+by hand. Pasted unedited it selects nothing and exits 1 rather than running
+the wrong test. This Windows rule is covered by a test of the quoting
+function, not by a run on Windows.
+
 | Option | Effect |
 |---|---|
 | `--seed <n>` | Base seed (a whole number of up to 10 digits; it is folded into 1 .. 2147483646) |
@@ -615,8 +625,10 @@ fglrun my_tests.42m --junit out/junit.xml
 
 Produces a `<testsuite>` document with one `<testcase>` per registered
 test. `<failure>`, `<error>`, and `<skipped>` children are added as
-appropriate. The format is consumed natively by Jenkins, GitLab CI,
-GitHub Actions test reporters, etc.
+appropriate. A test that passes with something to say, such as a fuzz target
+that discarded some inputs (`1 of 100 runs tested, 99 skipped`), also gets a
+`<system-out>` child with that text; its status stays a pass. The format is
+consumed natively by Jenkins, GitLab CI, GitHub Actions test reporters, etc.
 
 A typical `Makefile` target:
 

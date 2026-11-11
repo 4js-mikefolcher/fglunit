@@ -26,6 +26,10 @@ MAIN
         FUNCTION test_control_chars_do_not_break_the_document)
     CALL FglUnit.register("control_chars_in_suite_name_are_stripped",
         FUNCTION test_control_chars_in_suite_name_are_stripped)
+    CALL FglUnit.register("a_pass_with_a_message_carries_it_as_system_out",
+        FUNCTION test_a_pass_with_a_message_carries_it_as_system_out)
+    CALL FglUnit.register("a_plain_pass_stays_self_closing",
+        FUNCTION test_a_plain_pass_stays_self_closing)
 
     EXIT PROGRAM FglUnit.run()
 END MAIN
@@ -97,6 +101,36 @@ PUBLIC FUNCTION test_control_chars_in_suite_name_are_stripped()
     CALL Assertions.assertTrue(isWellFormedXml(out),
         "attributes are cleaned as well as element text")
     CALL Assertions.assertNotContains(out, ASCII 27, "ESC stripped from the attribute")
+END FUNCTION
+
+# A pass can carry text (a fuzz target that discarded most of its inputs says
+# so). It must reach the JUnit report, or a dashboard fed by it sees an
+# ordinary pass, and it must not change the status.
+PUBLIC FUNCTION test_a_pass_with_a_message_carries_it_as_system_out()
+    DEFINE results DYNAMIC ARRAY OF FglUnit.TestResult
+    DEFINE out STRING
+    CALL addResult(results, "mostlySkipped", FglUnit.STATUS_PASS,
+        "1 of 100 runs tested, 99 <skipped> & more", NULL)
+    LET out = writeAndRead(results, "Reporter", "passnote")
+    CALL Assertions.assertTrue(isWellFormedXml(out), "document must parse")
+    CALL Assertions.assertContains(out, "<system-out>1 of 100 runs tested, 99 ",
+        "the message is written as system-out")
+    CALL Assertions.assertContains(out, "&lt;skipped&gt; &amp; more",
+        "and escaped like any other text")
+    CALL Assertions.assertContains(out, "failures=\"0\"", "a note is not a failure")
+    CALL Assertions.assertContains(out, "errors=\"0\"",   "a note is not an error")
+    CALL Assertions.assertContains(out, "skipped=\"0\"",  "a note is not a skip")
+    CALL Assertions.assertNotContains(out, "<failure", "no failure element")
+    CALL Assertions.assertNotContains(out, "<skipped", "no skipped element")
+END FUNCTION
+
+PUBLIC FUNCTION test_a_plain_pass_stays_self_closing()
+    DEFINE results DYNAMIC ARRAY OF FglUnit.TestResult
+    DEFINE out STRING
+    CALL addResult(results, "plain", FglUnit.STATUS_PASS, NULL, NULL)
+    LET out = writeAndRead(results, "Reporter", "plainpass")
+    CALL Assertions.assertNotContains(out, "<system-out", "no output element without a message")
+    CALL Assertions.assertContains(out, "time=\"0.001\"/>", "the testcase element closes itself")
 END FUNCTION
 
 # Helpers -----------------------------------------------------------

@@ -195,6 +195,30 @@ fi
 fglrun "$runner" --seed 'x;id' "$FUZZFIX" >/dev/null 2>&1
 if [ $? -eq 2 ]; then pass "fglunit-run refuses a non-numeric --seed"; else fail "fglunit-run refuses a non-numeric --seed" "did not exit 2"; fi
 
+# The skip count of a mostly-skipped pass reaches the JUnit report, where a
+# dashboard will see it, without turning the pass into anything else.
+jdir=$(mktemp -d)
+fuzzfix --filter skipSomeFuzz --seed 1 --junit "$jdir/some.xml" >/dev/null 2>&1
+if grep -q '<system-out>[0-9][0-9]* of 200 runs tested, [0-9][0-9]* skipped</system-out>' "$jdir/some.xml" \
+   && grep -q 'failures="0" errors="0" skipped="0"' "$jdir/some.xml"; then
+    pass "a pass that skipped inputs says so in the JUnit report, and stays a pass"
+else
+    fail "a pass that skipped inputs says so in the JUnit report, and stays a pass" "$(cat "$jdir/some.xml" 2>&1)"
+fi
+fuzzfix --filter okFuzz --junit "$jdir/ok.xml" >/dev/null 2>&1
+if grep -q '<testcase name="okFuzz"' "$jdir/ok.xml" && ! grep -q 'system-out' "$jdir/ok.xml"; then
+    pass "a clean pass writes no output element"
+else
+    fail "a clean pass writes no output element" "$(cat "$jdir/ok.xml" 2>&1)"
+fi
+fglrun "$runner" --seed 1 --filter skipSomeFuzz --junit "$jdir/agg.xml" "$FUZZFIX" >/dev/null 2>&1
+if grep -q 'runs tested, [0-9][0-9]* skipped</system-out>' "$jdir/agg.xml"; then
+    pass "fglunit-run keeps the skip count in its aggregated report"
+else
+    fail "fglunit-run keeps the skip count in its aggregated report" "$(cat "$jdir/agg.xml" 2>&1)"
+fi
+rm -rf "$jdir"
+
 fuzz_exit_is "--seed with a non-number exits 2"               2 --seed abc
 fuzz_exit_is "--seed without a value exits 2"                 2 --seed
 fuzz_exit_is "--fuzz-runs with a negative number exits 2"     2 --fuzz-runs -1

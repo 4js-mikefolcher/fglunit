@@ -5,6 +5,7 @@ IMPORT util
 
 IMPORT FGL com.fourjs.fglunit.Reporter
 IMPORT FGL com.fourjs.fglunit.Fuzz
+IMPORT FGL com.fourjs.fglunit.Internal
 
 # Public types -------------------------------------------------------
 
@@ -530,6 +531,8 @@ PRIVATE FUNCTION runFuzz(reg Registration) RETURNS TestResult
    VAR skippedRuns INTEGER = 0
    VAR skipNote STRING
    VAR others STRING
+   VAR nameWord STRING
+   VAR nameExact BOOLEAN
 
    LET runs = NVL(reg.runs, cDefaultFuzzRuns)
    IF optFuzzRunsSet THEN
@@ -607,33 +610,22 @@ PRIVATE FUNCTION runFuzz(reg Registration) RETURNS TestResult
    ELSE
       LET others = ""
    END IF
+   # The name is quoted for the shell the line will be pasted into. Where it
+   # cannot be quoted safely the line carries the placeholder NAME and says so.
+   CALL Internal.shellWord(reg.name, os.Path.pathSeparator() == ";")
+      RETURNING nameWord, nameExact
+   IF NOT nameExact THEN
+      LET others = SFMT("  note:   replace NAME with the test name above, quoted for your shell: "
+         || "it has a character that cannot be quoted safely for cmd.exe\n%1", others)
+   END IF
    LET best.message = SFMT("fuzz: failed on run %1 of %2\n"
       || "  seed:   %3\n"
       || "  size:   %4\n"
       || "  inputs: %5\n"
       || "  replay: --filter %6 --seed %3 --fuzz-size %7 --fuzz-runs 1\n%9%8",
       failedRun, runs, failSeed, sizeText, NVL(bestTrace, "(none drawn)"),
-      replayArg(reg.name), bestSize, NVL(best.message, ""), others)
+      nameWord, bestSize, NVL(best.message, ""), others)
    RETURN best
-END FUNCTION
-
-#+ A value as one shell word, for the replay line that is meant to be pasted
-#+ into a shell. A plain name is shown as it is. Anything else is quoted: in
-#+ single quotes on a POSIX shell, where an embedded single quote becomes
-#+ '\'' (close, escaped quote, reopen), and in double quotes on Windows.
-PRIVATE FUNCTION replayArg(text STRING) RETURNS STRING
-   VAR plain util.Regexp = util.Regexp.compile("^[A-Za-z0-9_.-]+$")
-   VAR buffer base.StringBuffer
-   IF text IS NULL OR plain.matches(text) THEN
-      RETURN text
-   END IF
-   IF os.Path.pathSeparator() == ";" THEN
-      RETURN "\"" || text || "\""
-   END IF
-   LET buffer = base.StringBuffer.create()
-   CALL buffer.append(text)
-   CALL buffer.replace("'", "'\\''", 0)
-   RETURN "'" || buffer.toString() || "'"
 END FUNCTION
 
 #+ The other registered tests that --filter <name> would also select, as a

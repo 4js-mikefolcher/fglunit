@@ -22,8 +22,12 @@ so every release needs an entry here before it is published.
   size, inputs and replay options. `skip()` inside a run discards that
   input and the target carries on; it is reported as skipped only when
   every run was, and a pass that discarded some runs says how many were
-  tested (`1 of 100 runs tested, 99 skipped`). The replay line is quoted
-  for the shell and names any other test that `--filter` would also select.
+  tested (`1 of 100 runs tested, 99 skipped`); the JUnit report carries
+  that text in a `<system-out>` element on the passing testcase. The replay
+  line is quoted for the shell and names any other test that `--filter`
+  would also select. On Windows, a name that cmd.exe cannot quote safely
+  gets the placeholder `NAME` and a note instead of a line that would
+  misparse.
   Seeds are scrambled, so consecutive runs draw unrelated values. A
   multibyte character is generated only with `FGL_LENGTH_SEMANTICS=CHAR`
   in a UTF-8 locale, and as `?` otherwise, so a length limit is exact in
@@ -33,6 +37,8 @@ so every release needs an entry here before it is published.
   exits 2.
 - Self-tests, integration checks and `examples/CalculatorFuzz.4gl`. The
   `Fuzz` self-tests run under both `BYTE` and `CHAR` length semantics.
+  `make -C tests` runs every suite and fails at the end, so one failing
+  suite no longer hides the ones after it.
 
 ## [1.0.1]
 
