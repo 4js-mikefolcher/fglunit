@@ -113,6 +113,15 @@ hand-written `MAIN` style above still works unchanged — discovery is
 opt-in. See the [User Guide](USERGUIDE.md#discovery--running-a-whole-test-tree)
 for the conventions and full flag list.
 
+## Parametrized tests and fuzzing
+
+`FglUnit.registerCases` runs one test per row of a table, and
+`FglUnit.registerFuzz` runs a test many times with generated inputs from the
+`Fuzz` module: boundary values, NULL, awkward strings, seeded and
+repeatable. A failure is shrunk and reported with the options that replay it
+(`--seed`, `--fuzz-size`, `--fuzz-runs`). See the
+[User Guide](USERGUIDE.md#parametrized-tests-and-fuzzing).
+
 ## Documentation
 
 See [USERGUIDE.md](USERGUIDE.md) for the full API, fixtures (setup / teardown),

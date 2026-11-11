@@ -1,10 +1,19 @@
 PACKAGE com.fourjs.fglunit
 
+IMPORT os
+IMPORT util
+
 IMPORT FGL com.fourjs.fglunit.Reporter
+IMPORT FGL com.fourjs.fglunit.Fuzz
+IMPORT FGL com.fourjs.fglunit.Internal
 
 # Public types -------------------------------------------------------
 
 PUBLIC TYPE TestHandler FUNCTION() RETURNS ()
+
+# A parametrized test: called once per case, with the case as a JSON
+# object. Convert it to a record with args.toFGL(rec).
+PUBLIC TYPE CaseHandler FUNCTION(args util.JSONObject) RETURNS ()
 
 PUBLIC CONSTANT STATUS_PASS  = "PASS"
 PUBLIC CONSTANT STATUS_FAIL  = "FAIL"
@@ -21,9 +30,21 @@ END RECORD
 
 # Module-private state ----------------------------------------------
 
+PRIVATE CONSTANT cKindCase = "case"
+PRIVATE CONSTANT cKindBadRow = "badrow"
+PRIVATE CONSTANT cKindFuzz = "fuzz"
+PRIVATE CONSTANT cDefaultFuzzRuns = 100
+
+# kind is NULL for a plain test. A case carries its row as JSON text and
+# runs through the runCase trampoline; a row that is not a record carries
+# its failure message in args instead; a fuzz target carries its run count.
 PRIVATE TYPE Registration RECORD
     name STRING,
-    fn TestHandler
+    fn TestHandler,
+    kind STRING,
+    argFn CaseHandler,
+    args STRING,
+    runs INTEGER
 END RECORD
 
 PRIVATE DEFINE suiteName STRING
@@ -52,6 +73,20 @@ PRIVATE DEFINE optFailFast BOOLEAN
 PRIVATE DEFINE optJunit STRING
 PRIVATE DEFINE optColor STRING     # "auto" | "always" | "never"
 PRIVATE DEFINE optAllowEmpty BOOLEAN
+# An unset number is 0 in BDL, not NULL, and 0 is a meaningful value for
+# all three (--fuzz-runs 0 skips fuzz targets), so each carries a flag.
+PRIVATE DEFINE optFuzzSeed BIGINT
+PRIVATE DEFINE optFuzzSeedSet BOOLEAN
+PRIVATE DEFINE optFuzzRuns INTEGER
+PRIVATE DEFINE optFuzzRunsSet BOOLEAN
+PRIVATE DEFINE optFuzzSize INTEGER
+PRIVATE DEFINE optFuzzSizeSet BOOLEAN
+
+# Fuzz and case state: the base seed of this run, and the case being run
+# (read by the runCase trampoline, because a TestHandler takes no argument).
+PRIVATE DEFINE fuzzBase BIGINT
+PRIVATE DEFINE activeArgFn CaseHandler
+PRIVATE DEFINE activeArgs STRING
 
 # Public API: suite config + registration ---------------------------
 
@@ -82,7 +117,79 @@ PUBLIC FUNCTION register(name STRING, fn TestHandler)
     LET registry[registry.getLength() + 1].* = r.*
 END FUNCTION
 
+#+ Register one test per row of cases. Each run is named name[1], name[2],
+#+ ... and calls fn with the row as a JSON object, so a failure names the
+#+ row. Build cases with util.JSONArray.fromFGL(rows), where rows is a
+#+ DYNAMIC ARRAY OF a named record type. An empty table, and a row that is
+#+ not a record (a table of plain integers, say), are reported as failing
+#+ tests, never silently dropped and never a crash.
+PUBLIC FUNCTION registerCases(name STRING, fn CaseHandler,
+      cases util.JSONArray) RETURNS ()
+   VAR r Registration
+   VAR row util.JSONObject
+   VAR i INTEGER
+   IF cases IS NULL OR cases.getLength() == 0 THEN
+      LET r.name = name
+      LET r.fn = FUNCTION emptyCases
+      LET registry[registry.getLength() + 1].* = r.*
+      RETURN
+   END IF
+   FOR i = 1 TO cases.getLength()
+      INITIALIZE r.* TO NULL
+      LET r.name = SFMT("%1[%2]", name, i)
+      IF cases.getType(i) == "OBJECT" THEN
+         LET row = cases.get(i)
+         LET r.fn = FUNCTION runCase
+         LET r.kind = cKindCase
+         LET r.argFn = fn
+         LET r.args = row.toString()
+      ELSE
+         # Reading a plain value as a record would stop the program with a
+         # conversion error. Fail this row by name instead.
+         LET r.fn = FUNCTION notARecord
+         LET r.kind = cKindBadRow
+         LET r.args = SFMT("registerCases: row %1 of '%2' is a %3, not a record "
+            || "(build the table from a DYNAMIC ARRAY OF a record type)",
+            i, name, downshift(cases.getType(i)))
+      END IF
+      LET registry[registry.getLength() + 1].* = r.*
+   END FOR
+END FUNCTION
+
+#+ Register a fuzz target: fn runs runs times (default 100), each run with
+#+ a different seed, and fn draws its inputs from the Fuzz module. The
+#+ first run that fails is shrunk and reported with its seed, its size and
+#+ the inputs, plus the options that replay it. The target fails through
+#+ the ordinary assertions or by raising an error.
+PUBLIC FUNCTION registerFuzz(name STRING, fn TestHandler, runs INTEGER) RETURNS ()
+   VAR r Registration
+   LET r.name = name
+   LET r.fn = fn
+   LET r.kind = cKindFuzz
+   LET r.runs = runs
+   LET registry[registry.getLength() + 1].* = r.*
+END FUNCTION
+
 # Public API: options (usually set by CliArgs) ----------------------
+
+#+ Base seed for fuzz targets (run n uses seed + n - 1). Default: from the clock.
+PUBLIC FUNCTION setFuzzSeed(v BIGINT) RETURNS ()
+   LET optFuzzSeed = v
+   LET optFuzzSeedSet = (v IS NOT NULL)
+END FUNCTION
+
+#+ Override the number of runs of every fuzz target. 0 skips them.
+PUBLIC FUNCTION setFuzzRuns(v INTEGER) RETURNS ()
+   LET optFuzzRuns = v
+   LET optFuzzRunsSet = (v IS NOT NULL)
+END FUNCTION
+
+#+ Input size for fuzz runs (Fuzz.cFullSize by default). Used to replay a
+#+ shrunk failure.
+PUBLIC FUNCTION setFuzzSize(v INTEGER) RETURNS ()
+   LET optFuzzSize = v
+   LET optFuzzSizeSet = (v IS NOT NULL)
+END FUNCTION
 
 PUBLIC FUNCTION setVerbose(v BOOLEAN)
     LET optVerbose = v
@@ -182,6 +289,13 @@ PUBLIC FUNCTION run() RETURNS INTEGER
 
     CALL Reporter.onHeader(getSuiteName())
 
+    # Fuzz targets: pick the base seed once and print it, so a failure in
+    # CI can be replayed even if the failure text is lost.
+    LET fuzzBase = chooseFuzzBase()
+    IF countFuzz() > 0 THEN
+        DISPLAY SFMT("  fuzz seed %1", fuzzBase)
+    END IF
+
     LET startDt = CURRENT YEAR TO FRACTION(3)
 
     # A suite fixture that raises used to kill the program outright, with
@@ -202,7 +316,7 @@ PUBLIC FUNCTION run() RETURNS INTEGER
             END IF
             LET selected = selected + 1
 
-            CALL runOne(registry[i].name, registry[i].fn) RETURNING r.*
+            CALL runEntry(registry[i].*) RETURNING r.*
             LET results[results.getLength() + 1].* = r.*
 
             CALL Reporter.onProgress(r.*)
@@ -353,6 +467,273 @@ PRIVATE FUNCTION runOne(name STRING, fn TestHandler) RETURNS TestResult
 
     LET r.status = STATUS_PASS
     RETURN r
+END FUNCTION
+
+# Cases and fuzz targets ---------------------------------------------
+
+# Run one registration. A plain test goes straight to runOne; a case runs
+# through the runCase trampoline and has its row added to a failure; a fuzz
+# target runs many times.
+PRIVATE FUNCTION runEntry(reg Registration) RETURNS TestResult
+   VAR r TestResult
+   CASE reg.kind
+      WHEN cKindFuzz
+         CALL runFuzz(reg.*) RETURNING r.*
+      WHEN cKindCase
+         LET activeArgFn = reg.argFn
+         LET activeArgs = reg.args
+         CALL runOne(reg.name, reg.fn) RETURNING r.*
+         IF r.status == STATUS_FAIL OR r.status == STATUS_ERROR THEN
+            LET r.message = SFMT("case %1\n%2", reg.args, NVL(r.message, ""))
+         END IF
+      WHEN cKindBadRow
+         LET activeArgs = reg.args
+         CALL runOne(reg.name, reg.fn) RETURNING r.*
+      OTHERWISE
+         CALL runOne(reg.name, reg.fn) RETURNING r.*
+   END CASE
+   RETURN r
+END FUNCTION
+
+# The TestHandler every case runs as: it hands the current row to the
+# test's CaseHandler.
+PRIVATE FUNCTION runCase() RETURNS ()
+   VAR row util.JSONObject
+   LET row = util.JSONObject.parse(activeArgs)
+   CALL activeArgFn(row)
+END FUNCTION
+
+PRIVATE FUNCTION emptyCases() RETURNS ()
+   CALL notifyFailure("registerCases: the table has no rows, so nothing was tested", NULL)
+END FUNCTION
+
+# The TestHandler of a row that is not a record: it fails with the message
+# registerCases prepared.
+PRIVATE FUNCTION notARecord() RETURNS ()
+   CALL notifyFailure(activeArgs, NULL)
+END FUNCTION
+
+# Run a fuzz target: one seed per run, stop at the first failure and shrink
+# it. A pass is one PASS result; a failure is one FAIL or ERROR result whose
+# message carries everything needed to replay it.
+PRIVATE FUNCTION runFuzz(reg Registration) RETURNS TestResult
+   VAR r TestResult
+   VAR best TestResult
+   VAR runs INTEGER
+   VAR size INTEGER
+   VAR i INTEGER
+   VAR failedRun INTEGER = 0
+   VAR failSeed INTEGER
+   VAR bestSize INTEGER
+   VAR bestTrace STRING
+   VAR sizeText STRING
+   VAR totalMs INTEGER
+   VAR skippedRuns INTEGER = 0
+   VAR skipNote STRING
+   VAR others STRING
+   VAR nameWord STRING
+   VAR nameExact BOOLEAN
+
+   LET runs = NVL(reg.runs, cDefaultFuzzRuns)
+   IF optFuzzRunsSet THEN
+      LET runs = optFuzzRuns
+   END IF
+   LET size = Fuzz.cFullSize
+   IF optFuzzSizeSet THEN
+      LET size = optFuzzSize
+   END IF
+   LET r.name = reg.name
+
+   IF runs <= 0 THEN
+      LET r.status = STATUS_SKIP
+      LET r.message = "fuzzing disabled (0 runs)"
+      RETURN r
+   END IF
+
+   FOR i = 1 TO runs
+      LET failSeed = Fuzz.begin(fuzzBase + i - 1, size)
+      CALL runOne(reg.name, reg.fn) RETURNING r.*
+      LET totalMs = totalMs + r.durationMs
+      # skip() discards the input of this run, as "assume" does elsewhere:
+      # it is not a failure and it does not end the target. Stopping here
+      # would silently drop every later run.
+      IF r.status == STATUS_SKIP THEN
+         LET skippedRuns = skippedRuns + 1
+         LET skipNote = r.message
+         CONTINUE FOR
+      END IF
+      IF r.status != STATUS_PASS THEN
+         LET failedRun = i
+         EXIT FOR
+      END IF
+   END FOR
+
+   LET r.durationMs = totalMs
+   IF failedRun == 0 THEN
+      # No run failed. The target passed if any run was actually tested, and
+      # is reported as skipped only when every run discarded its input. A
+      # pass that discarded some inputs says how many were tested: a
+      # generator or precondition that quietly stops producing usable input
+      # must not look like a full run.
+      IF skippedRuns == runs THEN
+         LET r.status = STATUS_SKIP
+         LET r.message = SFMT("all %1 runs were skipped (%2)", runs, NVL(skipNote, "skipped"))
+      ELSE
+         LET r.status = STATUS_PASS
+         LET r.location = NULL
+         IF skippedRuns > 0 THEN
+            LET r.message = SFMT("%1 of %2 runs tested, %3 skipped",
+               runs - skippedRuns, runs, skippedRuns)
+         ELSE
+            LET r.message = NULL
+         END IF
+      END IF
+      RETURN r
+   END IF
+
+   # An explicit --fuzz-size is a replay (or a deliberate limit): report the
+   # failure exactly as it happens at that size, without shrinking it again.
+   IF optFuzzSizeSet THEN
+      LET best.* = r.*
+      LET bestSize = size
+      LET bestTrace = Fuzz.getTrace()
+      LET sizeText = SFMT("%1", bestSize)
+   ELSE
+      CALL shrinkFuzz(reg.*, failSeed, size, r.*, Fuzz.getTrace())
+         RETURNING best.*, bestSize, bestTrace
+      LET sizeText = SFMT("%1 (shrunk from %2)", bestSize, size)
+   END IF
+   LET best.durationMs = totalMs
+   LET others = alsoSelected(reg.name)
+   IF others IS NOT NULL THEN
+      LET others = SFMT("  note:   --filter is a substring match and also selects %1\n", others)
+   ELSE
+      LET others = ""
+   END IF
+   # The name is quoted for the shell the line will be pasted into. Where it
+   # cannot be quoted safely the line carries the placeholder NAME and says so.
+   CALL Internal.shellWord(reg.name, os.Path.pathSeparator() == ";")
+      RETURNING nameWord, nameExact
+   IF NOT nameExact THEN
+      LET others = SFMT("  note:   replace NAME with the test name above, quoted for your shell: "
+         || "it has a character that cannot be quoted safely for cmd.exe\n%1", others)
+   END IF
+   LET best.message = SFMT("fuzz: failed on run %1 of %2\n"
+      || "  seed:   %3\n"
+      || "  size:   %4\n"
+      || "  inputs: %5\n"
+      || "  replay: --filter %6 --seed %3 --fuzz-size %7 --fuzz-runs 1\n%9%8",
+      failedRun, runs, failSeed, sizeText, NVL(bestTrace, "(none drawn)"),
+      nameWord, bestSize, NVL(best.message, ""), others)
+   RETURN best
+END FUNCTION
+
+#+ The other registered tests that --filter <name> would also select, as a
+#+ short list, or NULL when the name selects only itself. --filter is a
+#+ substring match, so the replay of "bad" also runs "badder".
+PRIVATE FUNCTION alsoSelected(name STRING) RETURNS STRING
+   VAR i INTEGER
+   VAR shown INTEGER = 0
+   VAR more INTEGER = 0
+   VAR list STRING
+   FOR i = 1 TO registry.getLength()
+      IF registry[i].name != name AND registry[i].name.getIndexOf(name, 1) > 0 THEN
+         IF shown < 3 THEN
+            LET shown = shown + 1
+            IF list IS NULL THEN
+               LET list = registry[i].name
+            ELSE
+               LET list = list || ", " || registry[i].name
+            END IF
+         ELSE
+            LET more = more + 1
+         END IF
+      END IF
+   END FOR
+   IF more > 0 THEN
+      LET list = list || SFMT(" and %1 more", more)
+   END IF
+   RETURN list
+END FUNCTION
+
+# Re-run the failing seed at smaller sizes and keep the smallest size that
+# still fails. Size 0 is tried first (the smallest input of all), then the
+# range between the largest size known to pass and the smallest known to
+# fail is halved. The shrink is a heuristic: generators draw fewer and
+# smaller values at a smaller size, but the failure is not guaranteed to
+# be monotonic in size, so what is reported is a local minimum.
+PRIVATE FUNCTION shrinkFuzz(reg Registration, failSeed INTEGER, failSize INTEGER,
+      found TestResult, foundTrace STRING) RETURNS (TestResult, INTEGER, STRING)
+   VAR best TestResult
+   VAR trial TestResult
+   VAR bestSize INTEGER
+   VAR bestTrace STRING
+   VAR passSize INTEGER
+   VAR mid INTEGER
+   VAR used INTEGER
+
+   LET best.* = found.*
+   LET bestSize = failSize
+   LET bestTrace = foundTrace
+   LET passSize = -1
+
+   WHILE bestSize - passSize > 1
+      IF passSize < 0 THEN
+         LET mid = 0
+      ELSE
+         LET mid = (passSize + bestSize - (passSize + bestSize) MOD 2) / 2
+      END IF
+      LET used = Fuzz.begin(failSeed, mid)
+      CALL runOne(reg.name, reg.fn) RETURNING trial.*
+      IF trial.status == STATUS_FAIL OR trial.status == STATUS_ERROR THEN
+         LET best.* = trial.*
+         LET bestSize = mid
+         LET bestTrace = Fuzz.getTrace()
+      ELSE
+         LET passSize = mid
+      END IF
+   END WHILE
+   RETURN best.*, bestSize, bestTrace
+END FUNCTION
+
+# The base seed of this run: --seed when given, otherwise from the clock
+# and the process id. Printed by run(), so any failure can be replayed.
+PRIVATE FUNCTION chooseFuzzBase() RETURNS BIGINT
+   VAR now DATETIME HOUR TO FRACTION(3)
+   VAR text STRING
+   VAR buffer base.StringBuffer
+   VAR stamp BIGINT
+   VAR i INTEGER
+   IF optFuzzSeedSet THEN
+      RETURN optFuzzSeed
+   END IF
+   LET now = CURRENT HOUR TO FRACTION(3)
+   LET text = now
+   # Keep the digits of "14:22:33.113". (replaceAll with an empty
+   # replacement would give NULL: an empty string is NULL in BDL.)
+   LET buffer = base.StringBuffer.create()
+   FOR i = 1 TO text.getLength()
+      IF text.subString(i, i) >= "0" AND text.subString(i, i) <= "9" THEN
+         CALL buffer.append(text.subString(i, i))
+      END IF
+   END FOR
+   LET stamp = buffer.toString()
+   RETURN stamp + fgl_getpid() MOD 1000
+END FUNCTION
+
+# How many of the selected registrations are fuzz targets that will run.
+PRIVATE FUNCTION countFuzz() RETURNS INTEGER
+   VAR i INTEGER
+   VAR n INTEGER
+   IF optFuzzRunsSet AND optFuzzRuns <= 0 THEN
+      RETURN 0
+   END IF
+   FOR i = 1 TO registry.getLength()
+      IF registry[i].kind == cKindFuzz AND matchesFilter(registry[i].name) THEN
+         LET n = n + 1
+      END IF
+   END FOR
+   RETURN n
 END FUNCTION
 
 # Accessors for Reporter (step 4) -----------------------------------

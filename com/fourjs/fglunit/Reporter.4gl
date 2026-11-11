@@ -42,7 +42,10 @@ PUBLIC FUNCTION onProgress(r FglUnit.TestResult)
         CALL printDetail(mode, r.*)
     ELSE
         DISPLAY SFMT("  %1 %2", Internal.colorize(mode, color, sym), r.name)
-        IF r.status == FglUnit.STATUS_FAIL OR r.status == FglUnit.STATUS_ERROR THEN
+        # A pass with a message is a pass with something to say: a fuzz
+        # target that discarded some of its inputs reports how many.
+        IF r.status == FglUnit.STATUS_FAIL OR r.status == FglUnit.STATUS_ERROR
+                OR (r.status == FglUnit.STATUS_PASS AND r.message IS NOT NULL) THEN
             CALL printDetail(mode, r.*)
         END IF
     END IF
@@ -91,6 +94,7 @@ END FUNCTION
 #       <failure message="...">...</failure>       <!-- on FAIL -->
 #       <error message="...">...</error>           <!-- on ERROR -->
 #       <skipped/>                                  <!-- on SKIP -->
+#       <system-out>...</system-out>                <!-- on PASS that has a message -->
 #     </testcase>
 #     ...
 #   </testsuite>
@@ -142,7 +146,19 @@ PRIVATE FUNCTION writeJunitCase(ch base.Channel, suiteName STRING, r FglUnit.Tes
 
     CASE r.status
         WHEN FglUnit.STATUS_PASS
-            CALL ch.writeLine(openTag || "/>")
+            IF r.message IS NULL THEN
+                CALL ch.writeLine(openTag || "/>")
+            ELSE
+                # A pass that has something to say, such as a fuzz target that
+                # discarded most of its inputs ("1 of 100 runs tested, 99
+                # skipped"). A bare <testcase/> would show a dashboard an
+                # ordinary pass; <system-out> carries the text and leaves the
+                # status alone.
+                CALL ch.writeLine(openTag || ">")
+                CALL ch.writeLine(SFMT("    <system-out>%1</system-out>",
+                    Internal.xmlText(r.message)))
+                CALL ch.writeLine("  </testcase>")
+            END IF
         WHEN FglUnit.STATUS_FAIL
             CALL ch.writeLine(openTag || ">")
             CALL ch.writeLine(SFMT("    <failure message=%1>%2</failure>",

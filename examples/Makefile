@@ -27,6 +27,9 @@ run:
 	fglcomp -M -Wall test_MathExtra.run.4gl
 	# 4. run both suites through the aggregating driver
 	$(RUN) test_Calculator.run.42m test_MathExtra.run.42m
+	# 5. cases and fuzz targets: a hand-written runner, fixed seed
+	fglcomp -M -Wall CalculatorFuzz.4gl
+	fglrun CalculatorFuzz.42m --seed 1
 
 clean:
 	rm -f *.42m *.run.4gl
