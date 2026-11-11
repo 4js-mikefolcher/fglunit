@@ -51,21 +51,24 @@ END FUNCTION
 # them or to emit a document no parser will accept. A failure message
 # quoting ANSI-coloured or binary output would otherwise poison the whole
 # report, exactly when it is most needed.
+#
+# This is a single replace, not a copy one character at a time. With
+# FGL_LENGTH_SEMANTICS=BYTE, the default, a multibyte character is several
+# "characters", and subString(i, i) on one of its bytes returns a space, so
+# a loop that copies what it keeps turned "café" into "caf" and two spaces.
+# The C0 controls are single bytes below 0x20 and never part of a multibyte
+# sequence, so removing them leaves every other character as it was under
+# either length semantics.
 PRIVATE FUNCTION xmlClean(v STRING) RETURNS STRING
-    DEFINE sb base.StringBuffer
-    DEFINE i, n INTEGER
-    DEFINE c STRING
-
-    LET n = v.getLength()
-    LET sb = base.StringBuffer.create()
-    FOR i = 1 TO n
-        LET c = v.subString(i, i)
-        IF c < " " AND c != "\t" AND c != "\n" AND c != "\r" THEN
-            CONTINUE FOR
-        END IF
-        CALL sb.append(c)
-    END FOR
-    RETURN sb.toString()
+    IF v IS NULL THEN
+        # An empty string that is not NULL. A literal "" is NULL in BDL, and
+        # a NULL here would make every `"\"" || xmlEscape(x) || "\""` built
+        # from it NULL too, instead of a pair of quotes.
+        RETURN base.StringBuffer.create().toString()
+    END IF
+    # Everything below 0x20 except tab (09), LF (0A) and CR (0D). NUL cannot
+    # occur in a STRING.
+    RETURN v.replaceAll("[\x01-\x08\x0b\x0c\x0e-\x1f]", "")
 END FUNCTION
 
 # Text --------------------------------------------------------------

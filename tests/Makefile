@@ -13,12 +13,17 @@ export FGLLDPATH := $(PKG_ROOT):$(FGLLDPATH)
 
 all: run
 
+# test_Reporter and test_Internal run under both length semantics. The default
+# (BYTE) is what a CI runner or a customer machine has, and a developer shell
+# that exports CHAR would otherwise hide a BYTE failure in the text handling.
 run: $(TGTS) $(FIXTURES)
 	fglrun test_Assertions.42m
 	fglrun test_Discovery.42m
 	fglrun test_Aggregator.42m
-	fglrun test_Reporter.42m
-	fglrun test_Internal.42m
+	FGL_LENGTH_SEMANTICS=BYTE fglrun test_Reporter.42m
+	FGL_LENGTH_SEMANTICS=CHAR fglrun test_Reporter.42m
+	FGL_LENGTH_SEMANTICS=BYTE fglrun test_Internal.42m
+	FGL_LENGTH_SEMANTICS=CHAR fglrun test_Internal.42m
 	sh ./integration.sh
 
 %.42m: %.4gl

@@ -26,6 +26,8 @@ MAIN
         FUNCTION test_control_chars_do_not_break_the_document)
     CALL FglUnit.register("control_chars_in_suite_name_are_stripped",
         FUNCTION test_control_chars_in_suite_name_are_stripped)
+    CALL FglUnit.register("non_ascii_text_survives_into_the_report",
+        FUNCTION test_non_ascii_text_survives_into_the_report)
 
     EXIT PROGRAM FglUnit.run()
 END MAIN
@@ -97,6 +99,25 @@ PUBLIC FUNCTION test_control_chars_in_suite_name_are_stripped()
     CALL Assertions.assertTrue(isWellFormedXml(out),
         "attributes are cleaned as well as element text")
     CALL Assertions.assertNotContains(out, ASCII 27, "ESC stripped from the attribute")
+END FUNCTION
+
+# Non-ASCII text in a test name, a failure message or the suite name must come
+# out as it went in. Under the default FGL_LENGTH_SEMANTICS=BYTE it used to be
+# cut into bytes and written back as blanks.
+PUBLIC FUNCTION test_non_ascii_text_survives_into_the_report()
+    DEFINE results DYNAMIC ARRAY OF FglUnit.TestResult
+    DEFINE out STRING
+    CALL addResult(results, "naïve_test", FglUnit.STATUS_FAIL,
+        "expected café — naïve 😀", "at t.4gl:1")
+    LET out = writeAndRead(results, "Réporter", "nonascii")
+    CALL Assertions.assertContains(out, "name=\"naïve_test\"", "the test name is intact")
+    CALL Assertions.assertContains(out, "name=\"Réporter\"", "the suite name is intact")
+    CALL Assertions.assertContains(out, "expected café — naïve 😀", "the failure message is intact")
+    # In a C locale the XML parser rejects any UTF-8 document with non-ASCII
+    # text, whatever wrote it, so it is asked to parse only where it can.
+    IF isWellFormedXml("<?xml version=\"1.0\" encoding=\"UTF-8\"?><a>é</a>") THEN
+        CALL Assertions.assertTrue(isWellFormedXml(out), "document must parse")
+    END IF
 END FUNCTION
 
 # Helpers -----------------------------------------------------------

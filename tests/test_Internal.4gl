@@ -24,6 +24,12 @@ MAIN
         FUNCTION test_keeps_tab_newline_return)
     CALL FglUnit.register("keeps_non_ascii_text",
         FUNCTION test_keeps_non_ascii_text)
+    CALL FglUnit.register("keeps_two_three_and_four_byte_characters",
+        FUNCTION test_keeps_two_three_and_four_byte_characters)
+    CALL FglUnit.register("strips_controls_beside_non_ascii_text",
+        FUNCTION test_strips_controls_beside_non_ascii_text)
+    CALL FglUnit.register("empty_results_are_not_NULL",
+        FUNCTION test_empty_results_are_not_NULL)
     CALL FglUnit.register("xmlAttr_quotes_and_escapes",
         FUNCTION test_xmlAttr_quotes_and_escapes)
     CALL FglUnit.register("firstLine_splits_on_newline",
@@ -77,6 +83,41 @@ END FUNCTION
 PUBLIC FUNCTION test_keeps_non_ascii_text()
     CALL Assertions.assertEquals("café — naïve", Internal.xmlEscape("café — naïve"),
         "multi-byte characters survive the control-character filter")
+END FUNCTION
+
+# One test above covers 2- and 3-byte text mixed with ASCII; this one pins
+# each width on its own, 4 bytes included, because a character that is cut
+# into bytes is cut differently at each width.
+PUBLIC FUNCTION test_keeps_two_three_and_four_byte_characters()
+    CALL Assertions.assertEquals("é", Internal.xmlEscape("é"), "2 bytes")
+    CALL Assertions.assertEquals("日本語", Internal.xmlEscape("日本語"), "3 bytes")
+    CALL Assertions.assertEquals("😀", Internal.xmlEscape("😀"), "4 bytes")
+    CALL Assertions.assertEquals("a😀é日b", Internal.xmlEscape("a😀é日b"), "all of them, between ASCII")
+END FUNCTION
+
+# The controls are removed and the characters either side of them are not
+# touched, whether those are ASCII or multibyte.
+PUBLIC FUNCTION test_strips_controls_beside_non_ascii_text()
+    DEFINE dirty STRING
+    LET dirty = "é", ASCII 27, "[31m—", ASCII 7, "ï", ASCII 1, "😀", ASCII 31
+    CALL Assertions.assertEquals("é[31m—ï😀", Internal.xmlEscape(dirty),
+        "controls go, the characters around them stay")
+    LET dirty = "日", ASCII 9, "本", ASCII 10, "語", ASCII 13
+    CALL Assertions.assertEquals(dirty, Internal.xmlEscape(dirty), "tab, LF and CR are kept")
+END FUNCTION
+
+# In BDL a NULL operand makes a whole `||` expression NULL, so the escaped
+# form of nothing must be an empty string that is not NULL. The writers
+# build their lines by concatenation.
+PUBLIC FUNCTION test_empty_results_are_not_NULL()
+    DEFINE onlyControls STRING
+    LET onlyControls = ASCII 7, ASCII 27
+    CALL Assertions.assertEquals("<>", "<" || Internal.xmlEscape(NULL) || ">", "NULL input")
+    CALL Assertions.assertEquals("<>", "<" || Internal.xmlText(NULL) || ">", "xmlText of NULL")
+    CALL Assertions.assertEquals("<>", "<" || Internal.xmlEscape(onlyControls) || ">",
+        "input that is nothing but controls")
+    CALL Assertions.assertEquals("\"\"", Internal.xmlAttr(onlyControls),
+        "an attribute of nothing but controls is an empty pair of quotes")
 END FUNCTION
 
 PUBLIC FUNCTION test_xmlAttr_quotes_and_escapes()

@@ -7,6 +7,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 `fglpkg publish` reads the section matching the version in `fglpkg.json`,
 so every release needs an entry here before it is published.
 
+## [Unreleased]
+
+### Fixed
+
+- **Non-ASCII text was corrupted in the JUnit report.** With
+  `FGL_LENGTH_SEMANTICS` at its default (`BYTE`), "café" was written as
+  "caf" and two blanks, in test names, failure messages and the suite
+  name. The XML escaping now removes the forbidden control characters
+  without copying the text one character at a time, so multibyte text comes
+  out as it went in under either setting. `test_Reporter` and
+  `test_Internal` now run under both `BYTE` and `CHAR`.
+
 ## [1.0.1]
 
 No changes to the package. Only the version number in `fglpkg.json` differs
