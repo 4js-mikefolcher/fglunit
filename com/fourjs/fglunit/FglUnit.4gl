@@ -1,5 +1,6 @@
 PACKAGE com.fourjs.fglunit
 
+IMPORT os
 IMPORT util
 
 IMPORT FGL com.fourjs.fglunit.Reporter
@@ -528,6 +529,7 @@ PRIVATE FUNCTION runFuzz(reg Registration) RETURNS TestResult
    VAR totalMs INTEGER
    VAR skippedRuns INTEGER = 0
    VAR skipNote STRING
+   VAR others STRING
 
    LET runs = NVL(reg.runs, cDefaultFuzzRuns)
    IF optFuzzRunsSet THEN
@@ -566,13 +568,22 @@ PRIVATE FUNCTION runFuzz(reg Registration) RETURNS TestResult
    LET r.durationMs = totalMs
    IF failedRun == 0 THEN
       # No run failed. The target passed if any run was actually tested, and
-      # is reported as skipped only when every run discarded its input.
+      # is reported as skipped only when every run discarded its input. A
+      # pass that discarded some inputs says how many were tested: a
+      # generator or precondition that quietly stops producing usable input
+      # must not look like a full run.
       IF skippedRuns == runs THEN
          LET r.status = STATUS_SKIP
          LET r.message = SFMT("all %1 runs were skipped (%2)", runs, NVL(skipNote, "skipped"))
       ELSE
          LET r.status = STATUS_PASS
-         LET r.message = NULL
+         LET r.location = NULL
+         IF skippedRuns > 0 THEN
+            LET r.message = SFMT("%1 of %2 runs tested, %3 skipped",
+               runs - skippedRuns, runs, skippedRuns)
+         ELSE
+            LET r.message = NULL
+         END IF
       END IF
       RETURN r
    END IF
@@ -590,14 +601,67 @@ PRIVATE FUNCTION runFuzz(reg Registration) RETURNS TestResult
       LET sizeText = SFMT("%1 (shrunk from %2)", bestSize, size)
    END IF
    LET best.durationMs = totalMs
+   LET others = alsoSelected(reg.name)
+   IF others IS NOT NULL THEN
+      LET others = SFMT("  note:   --filter is a substring match and also selects %1\n", others)
+   ELSE
+      LET others = ""
+   END IF
    LET best.message = SFMT("fuzz: failed on run %1 of %2\n"
       || "  seed:   %3\n"
       || "  size:   %4\n"
       || "  inputs: %5\n"
-      || "  replay: --filter %6 --seed %3 --fuzz-size %7 --fuzz-runs 1\n%8",
+      || "  replay: --filter %6 --seed %3 --fuzz-size %7 --fuzz-runs 1\n%9%8",
       failedRun, runs, failSeed, sizeText, NVL(bestTrace, "(none drawn)"),
-      reg.name, bestSize, NVL(best.message, ""))
+      replayArg(reg.name), bestSize, NVL(best.message, ""), others)
    RETURN best
+END FUNCTION
+
+#+ A value as one shell word, for the replay line that is meant to be pasted
+#+ into a shell. A plain name is shown as it is. Anything else is quoted: in
+#+ single quotes on a POSIX shell, where an embedded single quote becomes
+#+ '\'' (close, escaped quote, reopen), and in double quotes on Windows.
+PRIVATE FUNCTION replayArg(text STRING) RETURNS STRING
+   VAR plain util.Regexp = util.Regexp.compile("^[A-Za-z0-9_.-]+$")
+   VAR buffer base.StringBuffer
+   IF text IS NULL OR plain.matches(text) THEN
+      RETURN text
+   END IF
+   IF os.Path.pathSeparator() == ";" THEN
+      RETURN "\"" || text || "\""
+   END IF
+   LET buffer = base.StringBuffer.create()
+   CALL buffer.append(text)
+   CALL buffer.replace("'", "'\\''", 0)
+   RETURN "'" || buffer.toString() || "'"
+END FUNCTION
+
+#+ The other registered tests that --filter <name> would also select, as a
+#+ short list, or NULL when the name selects only itself. --filter is a
+#+ substring match, so the replay of "bad" also runs "badder".
+PRIVATE FUNCTION alsoSelected(name STRING) RETURNS STRING
+   VAR i INTEGER
+   VAR shown INTEGER = 0
+   VAR more INTEGER = 0
+   VAR list STRING
+   FOR i = 1 TO registry.getLength()
+      IF registry[i].name != name AND registry[i].name.getIndexOf(name, 1) > 0 THEN
+         IF shown < 3 THEN
+            LET shown = shown + 1
+            IF list IS NULL THEN
+               LET list = registry[i].name
+            ELSE
+               LET list = list || ", " || registry[i].name
+            END IF
+         ELSE
+            LET more = more + 1
+         END IF
+      END IF
+   END FOR
+   IF more > 0 THEN
+      LET list = list || SFMT(" and %1 more", more)
+   END IF
+   RETURN list
 END FUNCTION
 
 # Re-run the failing seed at smaller sizes and keep the smallest size that

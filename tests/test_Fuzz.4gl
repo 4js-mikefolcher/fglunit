@@ -38,6 +38,10 @@ MAIN
    CALL FglUnit.register("booleanYieldsBothValues", FUNCTION testBoolean)
    CALL FglUnit.register("traceRecordsTheInputs", FUNCTION testTrace)
    CALL FglUnit.register("unseededGeneratorsStillWork", FUNCTION testUnseeded)
+   CALL FglUnit.register("beginSurvivesHugeSeeds", FUNCTION testBeginHugeSeed)
+   CALL FglUnit.register("stringsIncludeTabAndNewline", FUNCTION testStringTabNewline)
+   CALL FglUnit.register("consecutiveSeedsAreIndependent", FUNCTION testSeedsIndependent)
+   CALL FglUnit.register("drawsWithinARunAreIndependent", FUNCTION testDrawsIndependent)
 
    # Parametrized: one run per row, named intInBounds[1] ... intInBounds[5].
    LET bounds[1].lowest = 1
@@ -72,6 +76,45 @@ PRIVATE FUNCTION drawMixed(count INTEGER) RETURNS STRING
          Fuzz.nextDecimal(NULL, NULL), Fuzz.nextBoolean()))
    END FOR
    RETURN buffer.toString()
+END FUNCTION
+
+#+ Pearson's chi-square statistic of independence for pairs of dice rolls
+#+ (values 1 to 6), 25 degrees of freedom. The expected count of each cell
+#+ comes from the row and column totals, so a generator that favours some
+#+ values (nextInt does, toward its bounds) is not mistaken for a dependent
+#+ one. Independent rolls give about 25 and rarely more than 60.
+PRIVATE FUNCTION independence(first DYNAMIC ARRAY OF INTEGER,
+      second DYNAMIC ARRAY OF INTEGER) RETURNS DECIMAL(20,4)
+   VAR cells DYNAMIC ARRAY OF INTEGER
+   VAR rowTotal DYNAMIC ARRAY OF INTEGER
+   VAR colTotal DYNAMIC ARRAY OF INTEGER
+   VAR i INTEGER
+   VAR r INTEGER
+   VAR c INTEGER
+   VAR expected DECIMAL(20,6)
+   VAR chi DECIMAL(20,4) = 0
+   FOR i = 1 TO 36
+      LET cells[i] = 0
+   END FOR
+   FOR i = 1 TO 6
+      LET rowTotal[i] = 0
+      LET colTotal[i] = 0
+   END FOR
+   FOR i = 1 TO first.getLength()
+      LET cells[(first[i] - 1) * 6 + second[i]] = cells[(first[i] - 1) * 6 + second[i]] + 1
+      LET rowTotal[first[i]] = rowTotal[first[i]] + 1
+      LET colTotal[second[i]] = colTotal[second[i]] + 1
+   END FOR
+   FOR r = 1 TO 6
+      FOR c = 1 TO 6
+         LET expected = rowTotal[r] * colTotal[c] / first.getLength()
+         IF expected > 0 THEN
+            LET chi = chi + (cells[(r - 1) * 6 + c] - expected)
+               * (cells[(r - 1) * 6 + c] - expected) / expected
+         END IF
+      END FOR
+   END FOR
+   RETURN chi
 END FUNCTION
 
 # Tests --------------------------------------------------------------
@@ -330,6 +373,86 @@ END FUNCTION
 PRIVATE FUNCTION testUnseeded() RETURNS ()
    # A test that never calls seed() or begin() still gets a defined stream.
    CALL Assertions.assertNotNull(Fuzz.nextCount(3), "usable without a seed")
+END FUNCTION
+
+PRIVATE FUNCTION testBeginHugeSeed() RETURNS ()
+   VAR used INTEGER
+   VAR replayed INTEGER
+   VAR first STRING
+   # 2^63 - 1: adding the modulus before reducing used to overflow the
+   # BIGINT, and the NULL that came back restarted the generator at seed 1
+   # and full size.
+   LET used = Fuzz.begin(9223372036854775807, 7)
+   CALL Assertions.assertNotNull(used, "a seed near 2^63 is folded, not lost")
+   CALL Assertions.assertTrue(used >= 1 AND used <= 2147483646,
+      SFMT("seed folded to %1", used))
+   CALL Assertions.assertEqualsInt(7, Fuzz.getSize(), "the requested size is kept")
+   LET first = drawMixed(50)
+   LET replayed = Fuzz.begin(used, 7)
+   CALL Assertions.assertEquals(first, drawMixed(50), "the returned seed replays the run")
+   CALL Assertions.assertEqualsInt(used, replayed, "folding the returned seed changes nothing")
+   LET used = Fuzz.begin(9223372036854775000, 9)
+   CALL Assertions.assertNotNull(used, "so is a seed a few hundred below it")
+   CALL Assertions.assertEqualsInt(9, Fuzz.getSize(), "and its size is kept")
+END FUNCTION
+
+PRIVATE FUNCTION testStringTabNewline() RETURNS ()
+   VAR i INTEGER
+   VAR mixed STRING
+   VAR seen BOOLEAN = FALSE
+   # A comma list: ASCII is a prefix operator that swallows the rest of a
+   # || chain, so the same text written with || is "a ".
+   LET mixed = "a", ASCII 9, "b", ASCII 10, "c"
+   CALL Assertions.assertEqualsInt(5, mixed.getLength(), "the expected string has five characters")
+   CALL Fuzz.seed(5)
+   CALL Fuzz.setNullRate(0)
+   FOR i = 1 TO 2000
+      IF Fuzz.nextString(40) == mixed THEN
+         LET seen = TRUE
+      END IF
+   END FOR
+   CALL Assertions.assertTrue(seen, "a string with a tab and a newline between letters is generated")
+END FUNCTION
+
+PRIVATE FUNCTION testSeedsIndependent() RETURNS ()
+   VAR thisRun DYNAMIC ARRAY OF INTEGER
+   VAR nextRun DYNAMIC ARRAY OF INTEGER
+   VAR roll INTEGER
+   VAR s INTEGER
+   VAR used INTEGER
+   VAR chi DECIMAL(20,4)
+   # The runner gives consecutive seeds to consecutive runs. Without a
+   # scramble run k + 1 draws the values of run k plus a constant, and this
+   # statistic is about 3000; independent runs give about 25.
+   FOR s = 1 TO 3601
+      LET used = Fuzz.begin(s, Fuzz.cFullSize)
+      CALL Fuzz.setNullRate(0)
+      LET roll = Fuzz.nextInt(1, 6)
+      IF s <= 3600 THEN
+         LET thisRun[s] = roll
+      END IF
+      IF s >= 2 THEN
+         LET nextRun[s - 1] = roll
+      END IF
+   END FOR
+   LET chi = independence(thisRun, nextRun)
+   CALL Assertions.assertTrue(chi < 60, SFMT("run k and run k + 1 are dependent: chi-square %1", chi))
+END FUNCTION
+
+PRIVATE FUNCTION testDrawsIndependent() RETURNS ()
+   VAR first DYNAMIC ARRAY OF INTEGER
+   VAR second DYNAMIC ARRAY OF INTEGER
+   VAR s INTEGER
+   VAR used INTEGER
+   VAR chi DECIMAL(20,4)
+   FOR s = 1 TO 3600
+      LET used = Fuzz.begin(s, Fuzz.cFullSize)
+      CALL Fuzz.setNullRate(0)
+      LET first[s] = Fuzz.nextInt(1, 6)
+      LET second[s] = Fuzz.nextInt(1, 6)
+   END FOR
+   LET chi = independence(first, second)
+   CALL Assertions.assertTrue(chi < 60, SFMT("two draws of one run are dependent: chi-square %1", chi))
 END FUNCTION
 
 # Parametrized and fuzz entry points ----------------------------------

@@ -471,6 +471,17 @@ individually. A failing row prints the row itself:
   whose type does not match into NULL without an error. Declare the row
   members with the same types the test uses, and `assertNotNull` a member
   you depend on.
+- **The case function's parameter must be named `args`.** A function type
+  includes its parameter names, so `FUNCTION checkDivide(row util.JSONObject)`
+  does not compile (`-6631`, incompatible types) even though the type is the
+  same.
+- **Rows travel through JSON, which is not exact for wide numbers.** A
+  `BIGINT` above 2^53 (`9007199254740993` comes back as `9007199254740992`)
+  and a `DECIMAL` with more than about 16 significant digits
+  (`1234567890123456.7891` comes back as `1234567890123456.8`) are rounded.
+  This is the JSON bridge, not fglunit. To test such a value, declare the
+  row member as `STRING` and convert it in the test function with `LET n =
+  row.big`, which is exact.
 
 ### Fuzz targets
 
@@ -504,12 +515,15 @@ END FUNCTION
 ```
 
 The generators (`Fuzz` module). All of them are deterministic from the
-seed, so a run is repeatable on every platform:
+seed. A run repeats exactly on every platform and Genero version, with one
+exception: multibyte characters in strings (see the table). Numbers, dates,
+booleans, counts and the length of every string repeat everywhere; only a
+multibyte character itself depends on the environment.
 
 | Function | Besides random values, it produces |
 |---|---|
 | `nextInt(lowest, highest)` | the bounds, the bounds +/- 1, 0, 1, -1; the whole `INTEGER` range when the bounds are `NULL` |
-| `nextString(maxLength)` | blanks, quotes, `%` and `*`, a backslash, SQL / JSON / markup fragments, tabs, newlines, ESC, multibyte UTF-8, a combining accent, a string of exactly `maxLength` |
+| `nextString(maxLength)` | blanks, quotes, `%` and `*`, a backslash, SQL / JSON / markup fragments, tabs, newlines, ESC, multibyte UTF-8 (see below), a combining accent, a string of exactly `maxLength` |
 | `nextDate()` | 31/12/1899, 1/1/1, 29 February, 31/12/9999 |
 | `nextDecimal(lowest, highest)` | the bounds, 0, plus or minus 0.0000000001 |
 | `nextBoolean()` | `TRUE`, `FALSE` |
@@ -519,8 +533,18 @@ seed, so a run is repeatable on every platform:
   commonest BDL edge case. `Fuzz.setNullRate(0)` turns it off for the rest
   of the run; `setNullRate(100)` makes everything NULL. An empty string is
   NULL in BDL, so it is covered by the NULL rate.
+- **Multibyte characters need character length semantics.** A string is
+  allowed `maxLength` characters, so a generated multibyte character must
+  count as one. That holds only with `FGL_LENGTH_SEMANTICS=CHAR` in a UTF-8
+  locale. With the Genero default (`BYTE`), or in the `C` locale, each
+  multibyte character is generated as `?` instead, and every other value
+  and every length is unchanged. A failure found under one setting
+  therefore replays exactly under the same setting, and a string that
+  contains a multibyte character may differ under another.
 - The generators can be used in an ordinary test too: call
-  `Fuzz.seed(n)` first for a repeatable stream.
+  `Fuzz.seed(n)` first for a repeatable stream. Seeds are scrambled before
+  they start a stream, so consecutive seeds (which is what the runner uses
+  for consecutive runs) give streams that are not related.
 - A target fails when an assertion fails or when it raises a runtime error.
   Expression errors such as division by zero propagate only through
   functions that declare `WHENEVER ANY ERROR RAISE`, exactly as for
@@ -528,7 +552,11 @@ seed, so a run is repeatable on every platform:
 - A target can call `Assertions.skip` to **discard an input it cannot use**.
   That run is not a failure and does not end the target: the next run draws
   a new input. The target passes if at least one run was tested, and is
-  reported as skipped only when every run was discarded.
+  reported as skipped only when every run was discarded. A pass that
+  discarded some runs says so (`1 of 100 runs tested, 99 skipped`), so a
+  generator or precondition that quietly stops producing usable input does
+  not look like a full run. Fuzz targets do not fail for skipping too much;
+  watch for that line.
 
 **Seeds and replay.** `run` *k* of a target uses seed *base + k - 1*. The
 base seed comes from the clock and is printed at the start (`fuzz seed
@@ -553,6 +581,13 @@ Run the `replay:` options to reproduce that exact failure. An explicit
 `--fuzz-size` runs at that size and does not shrink again, so the replay
 shows the same inputs. A runtime error shrinks the same way (a division by
 zero typically shrinks to `int=0` at size 0).
+
+The `replay:` line is meant to be pasted into a shell, so a name that a shell
+would split or interpret is quoted (`--filter 'bad prop'`). `--filter` is a
+substring match, so replaying `bad` also runs `badder`. When that happens
+the failure says so (`note:   --filter is a substring match and also selects
+badder`); the target you are replaying still fails with the same inputs, and
+the others are extra. There is no exact-match option.
 
 | Option | Effect |
 |---|---|

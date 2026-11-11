@@ -31,6 +31,10 @@ MAIN
    CALL FglUnit.registerFuzz("errFuzz", FUNCTION fuzzErr, 200)
    CALL FglUnit.registerFuzz("skipSomeFuzz", FUNCTION fuzzSkipSome, 200)
    CALL FglUnit.registerFuzz("skipAllFuzz", FUNCTION fuzzSkipAll, 20)
+   # Names a shell cannot take as one word, and a name that is a substring
+   # of another: the replay line has to survive both.
+   CALL FglUnit.registerFuzz("spaced it's fuzz", FUNCTION fuzzBad, 50)
+   CALL FglUnit.registerFuzz("spaced it's fuzz too", FUNCTION fuzzOk, 5)
 
    LET goodRows[1].a = 1
    LET goodRows[1].b = 2

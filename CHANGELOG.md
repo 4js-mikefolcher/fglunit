@@ -21,11 +21,18 @@ so every release needs an entry here before it is published.
   NULL. A failing run is shrunk by input size and reported with its seed,
   size, inputs and replay options. `skip()` inside a run discards that
   input and the target carries on; it is reported as skipped only when
-  every run was.
+  every run was, and a pass that discarded some runs says how many were
+  tested (`1 of 100 runs tested, 99 skipped`). The replay line is quoted
+  for the shell and names any other test that `--filter` would also select.
+  Seeds are scrambled, so consecutive runs draw unrelated values. A
+  multibyte character is generated only with `FGL_LENGTH_SEMANTICS=CHAR`
+  in a UTF-8 locale, and as `?` otherwise, so a length limit is exact in
+  every environment.
 - `--seed`, `--fuzz-runs` and `--fuzz-size` on the suite runner, and
   forwarded by `fglunit-run`. A value that is not a whole number in range
   exits 2.
-- Self-tests, integration checks and `examples/CalculatorFuzz.4gl`.
+- Self-tests, integration checks and `examples/CalculatorFuzz.4gl`. The
+  `Fuzz` self-tests run under both `BYTE` and `CHAR` length semantics.
 
 ## [1.0.1]
 

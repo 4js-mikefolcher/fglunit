@@ -116,6 +116,9 @@ fuzz_says    "a skipped run does not end the target"  "v skipSomeFuzz"  --filter
 fuzz_says    "skipping every run reports SKIP"        "- skipAllFuzz"    --filter skipAllFuzz
 fuzz_says    "and says all runs were skipped"         "all 20 runs were skipped"  --filter skipAllFuzz -v
 fuzz_exit_is "skipping every run is not a failure"    0 --filter skipAllFuzz
+# A pass that discarded some inputs says so, without -v: it must not read as
+# a full run.
+fuzz_says    "a pass that skipped inputs says how many ran"  "[0-9][0-9]* of 200 runs tested, [0-9][0-9]* skipped"  --filter skipSomeFuzz --seed 1
 
 # The same seed gives the same failure, and the replay options reproduce
 # exactly the shrunk failure the first run reported.
@@ -138,6 +141,36 @@ if [ "$replay_rc" -eq 1 ] && [ "$replay_in" = "$first_in" ]; then
 else
     fail "the replay options reproduce the shrunk failure" \
         "exit $replay_rc, inputs '$replay_in' vs '$first_in' (seed '$fseed' size '$fsize')"
+fi
+
+# The replay line is meant to be pasted into a shell. A name with a space and
+# a quote must come back as one word, and a name that is a substring of
+# another must be reported as selecting it too.
+quoted=$(fuzzfix --filter "spaced it's fuzz" --seed 5 2>&1)
+qline=$(printf '%s\n' "$quoted" | sed -n 's/^ *replay: *//p' | head -1)
+if [ -n "$qline" ]; then
+    # eval is the point: it is what pasting the line into a shell does. The
+    # exit code alone proves nothing (a shell syntax error exits 1 as well),
+    # so the target must be seen to run and fail again.
+    qout=$(eval "fuzzfix $qline" 2>&1)
+    qrc=$?
+    if [ "$qrc" -eq 1 ] && printf '%s\n' "$qout" | grep -q "x spaced it's fuzz"; then
+        pass "a pasted replay line with a space and a quote reruns the failure"
+    else
+        fail "a pasted replay line with a space and a quote reruns the failure" "exit $qrc from: $qline"
+    fi
+else
+    fail "a pasted replay line with a space and a quote reruns the failure" "no replay line in the output"
+fi
+if printf '%s\n' "$quoted" | grep -q "also selects spaced it's fuzz too"; then
+    pass "the replay says when --filter also selects another test"
+else
+    fail "the replay says when --filter also selects another test" "no note naming the other test"
+fi
+if fuzzfix --filter badFuzz --seed 5 2>&1 | grep -q "also selects"; then
+    fail "a name that selects only itself gets no note" "a note was printed for badFuzz"
+else
+    pass "a name that selects only itself gets no note"
 fi
 
 fuzz_exit_is "cases that all pass exit 0"                     0 --filter okCases

@@ -42,7 +42,10 @@ PUBLIC FUNCTION onProgress(r FglUnit.TestResult)
         CALL printDetail(mode, r.*)
     ELSE
         DISPLAY SFMT("  %1 %2", Internal.colorize(mode, color, sym), r.name)
-        IF r.status == FglUnit.STATUS_FAIL OR r.status == FglUnit.STATUS_ERROR THEN
+        # A pass with a message is a pass with something to say: a fuzz
+        # target that discarded some of its inputs reports how many.
+        IF r.status == FglUnit.STATUS_FAIL OR r.status == FglUnit.STATUS_ERROR
+                OR (r.status == FglUnit.STATUS_PASS AND r.message IS NOT NULL) THEN
             CALL printDetail(mode, r.*)
         END IF
     END IF

@@ -13,13 +13,17 @@ export FGLLDPATH := $(PKG_ROOT):$(FGLLDPATH)
 
 all: run
 
+# test_Fuzz runs under both length semantics: the default (BYTE) is what a CI
+# runner or a customer machine has, and a developer shell that exports CHAR
+# would otherwise hide a BYTE failure.
 run: $(TGTS) $(FIXTURES)
 	fglrun test_Assertions.42m
 	fglrun test_Discovery.42m
 	fglrun test_Aggregator.42m
 	fglrun test_Reporter.42m
 	fglrun test_Internal.42m
-	fglrun test_Fuzz.42m
+	FGL_LENGTH_SEMANTICS=BYTE fglrun test_Fuzz.42m
+	FGL_LENGTH_SEMANTICS=CHAR fglrun test_Fuzz.42m
 	sh ./integration.sh
 
 %.42m: %.4gl

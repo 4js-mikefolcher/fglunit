@@ -7,7 +7,18 @@ IMPORT util
 # Every value comes from one deterministic stream (Park-Miller, written in
 # BDL so it does not depend on util.Math and cannot be disturbed by other
 # code calling srand). The same seed and size always produce the same
-# values, on every platform and Genero version.
+# values on every platform and Genero version, with one exception: strings.
+# A multibyte character is generated only where the runtime counts
+# characters and not bytes (FGL_LENGTH_SEMANTICS=CHAR in a UTF-8 locale);
+# anywhere else it is generated as "?", so that a length limit stays exact.
+# The same number of values is drawn either way, so every other value, and
+# the length of every string, is the same in every environment.
+#
+# The seed is scrambled before it starts the stream. Park-Miller is linear:
+# started from consecutive seeds, run k + 1 would draw the values of run k
+# plus a constant, and a target would see patterned inputs. begin() mixes
+# the seed with a nonlinear step so that consecutive seeds, which is what
+# the runner uses, give streams that look unrelated.
 #
 # FglUnit.registerFuzz() calls begin() before each run of a fuzz target and
 # reports the seed and size on a failure. A test can also call seed()
@@ -29,6 +40,7 @@ PUBLIC CONSTANT cFullSize = 100
 
 PRIVATE CONSTANT cModulus = 2147483647
 PRIVATE CONSTANT cMultiplier = 48271
+PRIVATE CONSTANT cScrambler = 1597334677
 PRIVATE CONSTANT cDefaultNullPercent = 5
 PRIVATE CONSTANT cTraceLimit = 400
 PRIVATE CONSTANT cLetters = "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789"
@@ -53,8 +65,11 @@ PUBLIC FUNCTION begin(seedValue BIGINT, newSize INTEGER) RETURNS INTEGER
    IF seedValue < 0 THEN
       LET seedValue = -seedValue
    END IF
-   LET folded = ((seedValue + cModulus - 2) MOD (cModulus - 1)) + 1
-   LET generatorState = folded
+   # Reduce before adding: seedValue + cModulus - 2 overflows a BIGINT for a
+   # seed near 2^63, and the NULL that results would silently restart the
+   # generator at seed 1 and full size.
+   LET folded = (((seedValue MOD (cModulus - 1)) + cModulus - 2) MOD (cModulus - 1)) + 1
+   LET generatorState = scramble(folded)
    LET sizeLimit = NVL(newSize, cFullSize)
    LET nullPercent = cDefaultNullPercent
    LET traceText = NULL
@@ -281,6 +296,22 @@ PRIVATE FUNCTION ensureStarted() RETURNS ()
    END IF
 END FUNCTION
 
+#+ The state a folded seed starts the stream from: 1 .. cModulus - 1 in,
+#+ 1 .. cModulus - 1 out. Multiplying by a constant and raising to the fifth
+#+ power modulo the prime cModulus is nonlinear in the seed, and is one to
+#+ one because 5 shares no factor with cModulus - 1, so two seeds never
+#+ start the same stream. A linear step alone would not do: consecutive
+#+ seeds would still give streams that differ by a constant.
+PRIVATE FUNCTION scramble(folded BIGINT) RETURNS BIGINT
+   VAR product BIGINT
+   VAR square BIGINT
+   VAR fourth BIGINT
+   LET product = (folded * cScrambler) MOD cModulus
+   LET square = (product * product) MOD cModulus
+   LET fourth = (square * square) MOD cModulus
+   RETURN (fourth * product) MOD cModulus
+END FUNCTION
+
 PRIVATE FUNCTION nextRaw() RETURNS BIGINT
    CALL ensureStarted()
    LET generatorState = (generatorState * cMultiplier) MOD cModulus
@@ -390,9 +421,14 @@ END FUNCTION
 
 #+ Multibyte UTF-8 characters, written as URL escapes so the source stays
 #+ ASCII: e-acute, sharp s, CJK, Arabic, a four-byte emoji and a lone
-#+ combining acute accent. Each entry is exactly one character, so the
-#+ length limit of a generated string is exact.
+#+ combining acute accent. Each entry must be exactly one character, or the
+#+ length limit of a generated string would not hold. What urlDecode returns
+#+ depends on the runtime: with FGL_LENGTH_SEMANTICS=CHAR in a UTF-8 locale
+#+ it is one character, with the default (BYTE) semantics the character
+#+ has a length of two to four, and in the C locale it is "?". An entry that
+#+ is not one character is replaced by "?", which is one in every setting.
 PRIVATE FUNCTION ensureMultibyte() RETURNS ()
+   VAR i INTEGER
    IF multibyte.getLength() > 0 THEN
       RETURN
    END IF
@@ -402,9 +438,15 @@ PRIVATE FUNCTION ensureMultibyte() RETURNS ()
    LET multibyte[4] = util.Strings.urlDecode("%D8%B9")
    LET multibyte[5] = util.Strings.urlDecode("%F0%9F%98%80")
    LET multibyte[6] = util.Strings.urlDecode("%CC%81")
+   FOR i = 1 TO multibyte.getLength()
+      IF multibyte[i].getLength() != 1 THEN
+         LET multibyte[i] = "?"
+      END IF
+   END FOR
 END FUNCTION
 
 PRIVATE FUNCTION specialString(index INTEGER) RETURNS STRING
+   VAR mixed STRING
    CASE index
       WHEN 0
          RETURN " "
@@ -431,7 +473,11 @@ PRIVATE FUNCTION specialString(index INTEGER) RETURNS STRING
       WHEN 11
          RETURN "<a href=\"x\">&amp;</a>"
       WHEN 12
-         RETURN "a" || ASCII 9 || "b" || ASCII 10 || "c"
+         # A comma list, not ||: ASCII is a prefix operator whose operand
+         # runs to the end of the || chain, so "a" || ASCII 9 || "b" ...
+         # evaluates to "a ".
+         LET mixed = "a", ASCII 9, "b", ASCII 10, "c"
+         RETURN mixed
       WHEN 13
          RETURN "  padded  "
       WHEN 14
