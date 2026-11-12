@@ -42,6 +42,14 @@ MAIN
         FUNCTION test_seconds_formatting)
     CALL FglUnit.register("color_modes_are_absolute",
         FUNCTION test_color_modes_are_absolute)
+    CALL FglUnit.register("shellWord_plain_names_are_left_alone",
+        FUNCTION test_shellWord_plain_names_are_left_alone)
+    CALL FglUnit.register("shellWord_posix_single_quotes",
+        FUNCTION test_shellWord_posix_single_quotes)
+    CALL FglUnit.register("shellWord_windows_double_quotes",
+        FUNCTION test_shellWord_windows_double_quotes)
+    CALL FglUnit.register("shellWord_windows_refuses_what_cannot_be_quoted",
+        FUNCTION test_shellWord_windows_refuses_what_cannot_be_quoted)
 
     EXIT PROGRAM FglUnit.run()
 END MAIN
@@ -171,4 +179,65 @@ PUBLIC FUNCTION test_color_modes_are_absolute()
         "never returns the text untouched")
     CALL Assertions.assertContains(Internal.colorize("always", Internal.ANSI_RED, "x"),
         "x", "always wraps the text")
+END FUNCTION
+
+# Shell quoting for the replay line ----------------------------------
+# shellWord takes the platform as a parameter, so the Windows rules are
+# tested on every machine. They are tested as strings: how cmd.exe then
+# parses them is not something a test on another platform can show.
+
+PRIVATE FUNCTION wordOf(text STRING, windows BOOLEAN) RETURNS STRING
+    DEFINE word STRING
+    DEFINE exact BOOLEAN
+    CALL Internal.shellWord(text, windows) RETURNING word, exact
+    RETURN word
+END FUNCTION
+
+PRIVATE FUNCTION exactOf(text STRING, windows BOOLEAN) RETURNS BOOLEAN
+    DEFINE word STRING
+    DEFINE exact BOOLEAN
+    CALL Internal.shellWord(text, windows) RETURNING word, exact
+    RETURN exact
+END FUNCTION
+
+PUBLIC FUNCTION test_shellWord_plain_names_are_left_alone()
+    CALL Assertions.assertEquals("badFuzz", wordOf("badFuzz", FALSE), "POSIX")
+    CALL Assertions.assertEquals("badFuzz", wordOf("badFuzz", TRUE), "Windows")
+    CALL Assertions.assertEquals("a_b.c-d1", wordOf("a_b.c-d1", FALSE), "punctuation that is safe")
+    CALL Assertions.assertTrue(exactOf("badFuzz", TRUE), "a plain name is exact")
+END FUNCTION
+
+PUBLIC FUNCTION test_shellWord_posix_single_quotes()
+    CALL Assertions.assertEquals("'bad prop'", wordOf("bad prop", FALSE), "a space")
+    CALL Assertions.assertEquals("'it'\\''s'", wordOf("it's", FALSE),
+        "an embedded single quote closes, escapes and reopens")
+    CALL Assertions.assertEquals("''\\'''\\'''", wordOf("''", FALSE), "two single quotes in a row")
+    CALL Assertions.assertEquals("'$(touch x)'", wordOf("$(touch x)", FALSE), "a command substitution")
+    CALL Assertions.assertEquals("'say \"hi\"'", wordOf("say \"hi\"", FALSE), "a double quote is literal")
+    CALL Assertions.assertEquals("'100%'", wordOf("100%", FALSE), "a percent sign is literal")
+    CALL Assertions.assertEquals("'a\nb'", wordOf("a\nb", FALSE), "a newline is literal inside single quotes")
+    CALL Assertions.assertTrue(exactOf("it's", FALSE), "POSIX can always quote")
+    CALL Assertions.assertTrue(exactOf("a\nb", FALSE), "even a newline")
+END FUNCTION
+
+PUBLIC FUNCTION test_shellWord_windows_double_quotes()
+    CALL Assertions.assertEquals("\"bad prop\"", wordOf("bad prop", TRUE), "a space")
+    CALL Assertions.assertEquals("\"it's\"", wordOf("it's", TRUE), "a single quote is literal")
+    CALL Assertions.assertEquals("\"a\\b\"", wordOf("a\\b", TRUE), "a backslash inside the name is literal")
+    CALL Assertions.assertTrue(exactOf("bad prop", TRUE), "a quotable name is exact")
+END FUNCTION
+
+PUBLIC FUNCTION test_shellWord_windows_refuses_what_cannot_be_quoted()
+    # Each of these has no safe spelling inside double quotes, so the word is
+    # a placeholder and `exact` is FALSE: the caller must say so.
+    CALL Assertions.assertEquals("NAME", wordOf("say \"hi\"", TRUE), "a double quote")
+    CALL Assertions.assertFalse(exactOf("say \"hi\"", TRUE), "a double quote is not exact")
+    CALL Assertions.assertFalse(exactOf("100%", TRUE), "a percent sign")
+    CALL Assertions.assertFalse(exactOf("a\nb", TRUE), "a line feed")
+    CALL Assertions.assertFalse(exactOf("a\rb", TRUE), "a carriage return")
+    CALL Assertions.assertFalse(exactOf("dir\\", TRUE),
+        "a trailing backslash would escape the closing quote")
+    # The same names are fine on POSIX: the refusal is the Windows rule only.
+    CALL Assertions.assertTrue(exactOf("say \"hi\"", FALSE), "POSIX quotes a double quote")
+    CALL Assertions.assertTrue(exactOf("dir\\", FALSE), "POSIX quotes a trailing backslash")
 END FUNCTION

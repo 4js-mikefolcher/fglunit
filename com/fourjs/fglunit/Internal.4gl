@@ -1,6 +1,7 @@
 PACKAGE com.fourjs.fglunit
 
 IMPORT os
+IMPORT util
 
 # Internal helpers shared by the fglunit modules and the two tools.
 #
@@ -225,4 +226,42 @@ PUBLIC FUNCTION deleteFile(path STRING)
         LET ignored = os.Path.delete(path)
     CATCH
     END TRY
+END FUNCTION
+
+# One value as a single shell word, for text that is shown to a person to
+# paste into a shell (the fuzz replay line). `windows` selects the quoting
+# rules, so both can be tested on any machine.
+#
+# A plain name (letters, digits, "_", ".", "-") is returned as it is. On a
+# POSIX shell anything else goes in single quotes, where an embedded single
+# quote becomes '\'' (close, escaped quote, reopen): every other character
+# is literal, so any value can be quoted. On Windows the only quoting
+# available is double quotes, and some characters cannot be neutralised
+# inside them: a double quote, %, a line break, and a backslash at the end
+# (which would escape the closing quote). Guessing an escape there is worse
+# than not producing a line, so the word is the placeholder NAME and `exact`
+# is FALSE; the caller says so and the person supplies the name by hand. The
+# same set fglunit_run refuses for the values it hands to a shell.
+PUBLIC FUNCTION shellWord(text STRING, windows BOOLEAN) RETURNS (STRING, BOOLEAN)
+    DEFINE plain util.Regexp
+    DEFINE buffer base.StringBuffer
+
+    LET plain = util.Regexp.compile("^[A-Za-z0-9_.-]+$")
+    IF text IS NULL OR plain.matches(text) THEN
+        RETURN text, TRUE
+    END IF
+
+    IF windows THEN
+        IF text.getIndexOf("\"", 1) > 0 OR text.getIndexOf("%", 1) > 0
+            OR text.getIndexOf("\n", 1) > 0 OR text.getIndexOf("\r", 1) > 0
+            OR endsWith(text, "\\") THEN
+            RETURN "NAME", FALSE
+        END IF
+        RETURN "\"" || text || "\"", TRUE
+    END IF
+
+    LET buffer = base.StringBuffer.create()
+    CALL buffer.append(text)
+    CALL buffer.replace("'", "'\\''", 0)
+    RETURN "'" || buffer.toString() || "'", TRUE
 END FUNCTION
