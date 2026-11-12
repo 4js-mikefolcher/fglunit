@@ -14,20 +14,22 @@ export FGLLDPATH := $(PKG_ROOT):$(FGLLDPATH)
 all: run
 
 # Every suite runs even when an earlier one fails, and make fails at the end:
-# a failing suite must not hide the ones after it. That matters most for
-# test_Fuzz, which runs under both length semantics because the default (BYTE)
-# is what a CI runner or a customer machine has, and a developer shell that
-# exports CHAR would otherwise hide a BYTE failure.
+# a failing suite must not hide the ones after it. test_Reporter, test_Internal
+# and test_Fuzz run under both length semantics because the default (BYTE) is
+# what a CI runner or a customer machine has, and a developer shell that
+# exports CHAR would otherwise hide a BYTE failure in the text handling.
 run: $(TGTS) $(FIXTURES)
 	@status=0; \
-	for suite in test_Assertions test_Discovery test_Aggregator test_Reporter test_Internal; do \
+	for suite in test_Assertions test_Discovery test_Aggregator; do \
 		echo "fglrun $$suite.42m"; \
 		fglrun $$suite.42m || status=1; \
 	done; \
-	echo "FGL_LENGTH_SEMANTICS=BYTE fglrun test_Fuzz.42m"; \
-	FGL_LENGTH_SEMANTICS=BYTE fglrun test_Fuzz.42m || status=1; \
-	echo "FGL_LENGTH_SEMANTICS=CHAR fglrun test_Fuzz.42m"; \
-	FGL_LENGTH_SEMANTICS=CHAR fglrun test_Fuzz.42m || status=1; \
+	for suite in test_Reporter test_Internal test_Fuzz; do \
+		for semantics in BYTE CHAR; do \
+			echo "FGL_LENGTH_SEMANTICS=$$semantics fglrun $$suite.42m"; \
+			FGL_LENGTH_SEMANTICS=$$semantics fglrun $$suite.42m || status=1; \
+		done; \
+	done; \
 	echo "sh ./integration.sh"; \
 	sh ./integration.sh || status=1; \
 	exit $$status
